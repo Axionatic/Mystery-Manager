@@ -1,0 +1,7 @@
+openpyxl
+mysql-connector-python
+paramiko
+python-dotenv
+rich
+pulp
+textual

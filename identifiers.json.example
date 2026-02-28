@@ -1,0 +1,20 @@
+{
+  "donation_identifiers": [
+    "ChartiableOrg",
+    "Sm DonorFirstName",
+    "Lg CharityName",
+    "donor@example.com"
+  ],
+  "staff_identifiers": [
+    "staff@example.com"
+  ],
+  "standalone_name_to_email": {
+    "Customer Nickname": "customer@example.com"
+  },
+  "charity_keywords": [
+    "local charity", "community org"
+  ],
+  "box_size_overrides": {
+    "Customer Name #2": "small"
+  }
+}

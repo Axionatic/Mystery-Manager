@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.local
+identifiers.json
+queries.json
+scoring_config.json
+
+# Business data (customer orders, historical allocations)
+historical/
+cleaned/
+cleaned_llm/
+llm_comparisons/
+offer_*.xlsx
+
+# Generated outputs
+benchmark_results/
+diagnostics/
+output/
+mystery_manager.log
+
+# Cached LLM name match results
+mappings/
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local settings
+.claude/
+
+# Implementation-specific docs
+docs/
+
+# GSD workspace
+.planning/

@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy this file to queries.json and fill in with your actual SQL. Each query must return columns with the alias names shown here.",
+
+  "fetch_offer_items": "SELECT <id> AS item_id, <name> AS item_name, <price> AS item_price, <category_fk> AS category_id, <size_col> AS size, <order_col> AS sort_order, <wholesale_qty_col> AS wholesale_qty, <wholesale_price_col> AS wholesale_price, <components_col> AS components FROM <items_table> WHERE <offer_fk> = %s AND <category_fk> IN (<fruit_id>, <veg_id>) AND <soft_delete_col> IS NULL ORDER BY <order_col>, <id>",
+
+  "fetch_offer_parts_by_name": "SELECT <id> AS item_id, <name> AS item_name, <price> AS item_price, <category_fk> AS category_id, <order_col> AS sort_order FROM <items_table> WHERE <offer_fk> = %s AND <soft_delete_col> IS NULL ORDER BY <order_col>, <id>",
+
+  "fetch_offer_parts_by_name_include_deleted": "SELECT <id> AS item_id, <name> AS item_name, <price> AS item_price, <category_fk> AS category_id, <order_col> AS sort_order FROM <items_table> WHERE <offer_fk> = %s ORDER BY <order_col>, <id>",
+
+  "fetch_categories": "SELECT <id> AS category_id, <name> AS category_name FROM <categories_table>",
+
+  "fetch_mystery_box_buyers": "SELECT <user_id> AS user_id, <user_email> AS user_email, <item_id> AS offer_part_id, <item_name> AS product_name, <buy_options_col> AS options_json, <order_id> AS order_id, <qty_col> AS qty, <selected_option_col> AS selected_option, <note_col> AS buyer_note FROM <order_lines_table> JOIN <orders_table> ... JOIN <users_table> ... JOIN <items_table> ... WHERE <offer_fk> = %s AND ... AND LOWER(<item_name>) LIKE '%%mystery box%%' ORDER BY <item_name>, <user_email>",
+
+  "fetch_buyer_existing_categories": "SELECT DISTINCT <category_fk> AS category_id FROM <order_lines_table> JOIN ... WHERE <offer_fk> = %s AND <user_email> = %s AND <qty_col> > 0 AND ... AND LOWER(<item_name>) NOT LIKE '%%mystery box%%'",
+
+  "fetch_offer_gross_retail": "SELECT COALESCE(SUM(<price> * <qty_col>), 0) AS gross FROM <order_lines_table> JOIN ... WHERE <offer_fk> = %s AND <soft_delete_col> IS NULL ...",
+
+  "fetch_customer_giving": "SELECT COALESCE(SUM(<price> * <qty_col>), 0) AS giving FROM <order_lines_table> JOIN ... WHERE <offer_fk> = %s AND <category_fk> = <giving_category_id> AND <soft_delete_col> IS NULL ...",
+
+  "fetch_recent_offer_ids": "SELECT DISTINCT <offer_fk> AS offer_id FROM <items_table> WHERE <category_fk> IN (<fruit_id>, <veg_id>) AND <soft_delete_col> IS NULL ORDER BY <offer_fk> DESC LIMIT %s"
+}
