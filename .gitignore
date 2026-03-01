@@ -1,0 +1,25 @@
+# Secrets
+.env
+.env.local
+identifiers.json
+
+# Business data (customer orders, historical allocations)
+historical/
+cleaned/
+offer_*.xlsx
+
+# Compare run outputs
+output/
+
+# Cached LLM name match results
+mappings/
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local settings
+.claude/
+
+# Project-specific output context
+OUTPUT_REFERENCE.md
