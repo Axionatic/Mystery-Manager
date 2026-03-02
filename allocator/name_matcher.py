@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 
 MAPPINGS_DIR = Path(__file__).parent.parent / "mappings"
 
-# Non-F&V supplier prefixes to exclude from matching
+# Mystery box line items in the XLSX (not produce, always excluded)
 _EXCLUDE_PREFIXES = (
-    "Baker Boys", "Basketcase", "Honey", "Pollen", "Eddies",
-    "Summer Snow", "A large mystery", "A medium mystery", "A small mystery",
+    "A large mystery", "A medium mystery", "A small mystery",
 )
 
 
@@ -125,6 +124,9 @@ def match_items(
         Unmatched items are omitted.
     """
     db_parts = fetch_offer_parts_by_name(offer_id)
+    if not db_parts:
+        logger.info(f"Offer {offer_id}: no live offer_parts, retrying with soft-deleted records")
+        db_parts = fetch_offer_parts_by_name(offer_id, include_deleted=True)
     db_names = list(db_parts.keys())
 
     # Load existing cache
@@ -186,5 +188,13 @@ def match_items(
 
     # Save cache
     _save_cache(offer_id, cache)
+
+    # Warn about allocated items that couldn't be matched (may be non-F&V)
+    unmatched = [n for n in xlsx_names if n not in cache and not _should_exclude(n)]
+    if unmatched:
+        logger.warning(
+            f"Offer {offer_id}: {len(unmatched)} allocated item(s) unmatched "
+            f"(may be non-F&V): {unmatched}"
+        )
 
     return cache

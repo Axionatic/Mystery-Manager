@@ -287,18 +287,20 @@ def fetch_offer_items(offer_id: int) -> list[dict]:
 
 
 @functools.cache
-def fetch_offer_parts_by_name(offer_id: int) -> dict[str, dict]:
+def fetch_offer_parts_by_name(offer_id: int, include_deleted: bool = False) -> dict[str, dict]:
     """
-    Fetch F&V offer parts keyed by name for name-based matching (Tier C).
+    Fetch offer parts keyed by name for historical name-based matching.
 
     Returns {name: {id, name, price, part_category_id, pack_order}}.
+    Includes all categories (non-F&V items are rare but legitimate in mystery boxes).
+    Set include_deleted=True for historical offers where parts are soft-deleted.
     """
-    query = """
+    deleted_clause = "" if include_deleted else "AND deleted_at IS NULL"
+    query = f"""
         SELECT id, name, price, part_category_id, pack_order
         FROM offer_parts
         WHERE offer_id = %s
-          AND part_category_id IN (2, 3)
-          AND deleted_at IS NULL
+          {deleted_clause}
         ORDER BY pack_order, id
     """
     with get_connection() as conn:
