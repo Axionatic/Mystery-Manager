@@ -97,7 +97,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 ## Database gotchas
 
-- **Always filter soft deletes**: `buys`, `buy_parts`, and `offer_parts` all have `deleted_at`. Every query joining these tables must include `deleted_at IS NULL`.
+- **Always filter soft deletes**: `buys`, `buy_parts`, and `offer_parts` all have `deleted_at`. Every query joining these tables must include `deleted_at IS NULL` — **except** `fetch_offer_parts_by_name(include_deleted=True)` which is used for historical name matching on older offers where parts are soft-deleted but prices are still valid.
 - **User names are encrypted** (Laravel encryption). Use `email` as the identifier, never `first_name`/`surname`.
 - **Prices are in cents** (integer) everywhere — DB, models, config, output.
 - SSH key path and connection config in `.env` (set `SSH_ENABLED=true` to use tunnel).
@@ -135,9 +135,9 @@ Score = 100 minus penalties. Value penalty: 114-117% sweet spot, heavy penalty <
 | A | 64–106 | 42 | Yes | `historical/` | Full algorithm comparison |
 | B | 55–63 | 9 | Yes | `historical/older/` | All standalone boxes |
 | C | 49–54 | 6 | No (names) | `historical/older/` | LLM name matching; 58–100% match quality |
-| D | 22–48 | 16 | — | `historical/older/` | No DB data (soft-deleted); cannot process |
+| D | 22–48 | 16 | — | `historical/older/` | `offer_parts` soft-deleted but prices still valid; uses `include_deleted=True` for name matching |
 
-Offers 45–48 and 22–44 have all `offer_parts` soft-deleted in DB. Tier C LLM matching requires running `clean_history.py` outside Claude Code (nested session restriction). Cached matches in `mappings/`.
+Offers 45–48 and 22–44 have all `offer_parts` soft-deleted in DB, but price data is still usable for historical name matching. Tier C/D LLM matching requires running `clean_history.py` outside Claude Code (nested session restriction). Cached matches in `mappings/`.
 
 ## Reference
 

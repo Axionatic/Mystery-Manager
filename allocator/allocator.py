@@ -42,7 +42,12 @@ logger = logging.getLogger(__name__)
 
 
 def infer_tier_from_name(name: str) -> str:
-    """Infer box tier from offer_part name like 'A medium mystery box!'."""
+    """Infer box tier from offer_part name like 'A medium mystery box!'.
+
+    Uses simple substring matching because the size keyword appears in the
+    middle of the string (not as a prefix/suffix), so parse_box_name() would
+    return None for all these names.
+    """
     lower = name.lower()
     if "small" in lower:
         return "small"
