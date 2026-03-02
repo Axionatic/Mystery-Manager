@@ -139,8 +139,8 @@ STANDALONE_NAME_TO_EMAIL = _IDENTIFIERS["standalone_name_to_email"]
 BOX_SIZE_OVERRIDES = _IDENTIFIERS.get("box_size_overrides", {})
 
 # Special columns to skip in historical data
-STOCK_IDENTIFIERS = {"Stock"}
-BUFFER_IDENTIFIERS = {"Buffer", "Volunteers"}
+STOCK_IDENTIFIERS = {"Stock", "stock", "STOCK"}
+BUFFER_IDENTIFIERS = {"Buffer", "buffer", "Volunteers", "volunteers"}
 SUM_IDENTIFIERS = {"SUM", "Sum", "sum"}
 
 # Additional skip-column patterns for older historical data
@@ -149,9 +149,10 @@ SKIP_COLUMN_IDENTIFIERS = {
     "Md Actual", "Magda Actual",
     "Total",
     "Price Ea", "JS Price Ea", "JS Cost Ea", "Cost Ea", "RRP Ea",
-    "Qty Sold", "Required Buy", "Overage", "Expected Purchase",
-    "Pack Order", "Supplier #", "Supplier Name",
+    "Qty Sold", "Required Buy", "Overage", "Expected Purchase", "Expected Cost",
+    "Pack Order", "Supplier #", "Supplier Name", "Supplier",
     "Qty (after mys)",
+    "Buyer Notes", "buyer notes",
 }
 
 # CCI allocation target (loaded from .env)

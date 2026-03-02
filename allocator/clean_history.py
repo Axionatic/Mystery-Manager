@@ -19,15 +19,12 @@ from pathlib import Path
 
 import openpyxl
 
-from allocator.box_parser import classify_box, parse_box_name
+from allocator.box_parser import classify_box
 from allocator.config import (
     BOX_SIZE_OVERRIDES,
     BUFFER_IDENTIFIERS,
     CHARITY_IDENTIFIERS,
-    DONATION_IDENTIFIERS,
     SKIP_COLUMN_IDENTIFIERS,
-    STAFF_IDENTIFIERS,
-    STANDALONE_NAME_TO_EMAIL,
     STOCK_IDENTIFIERS,
     SUM_IDENTIFIERS,
 )
@@ -39,10 +36,20 @@ OLDER_DIR = HISTORICAL_DIR / "older"
 CLEANED_DIR = Path(__file__).parent.parent / "cleaned"
 
 # Offers to skip entirely (no usable mystery data)
+# Note: "Week 6 Shopping List.xlsx" is also excluded — it has no offer_* prefix so
+# discover_files() skips it automatically. It uses non-standard price tiers and is
+# not useful for algorithm comparison or ML training.
 SKIP_OFFERS = {44}
 
 # Per-offer sheet overrides: {offer_id: sheet_name}
-SHEET_OVERRIDES = {}
+SHEET_OVERRIDES = {
+    22: "Week 7 - 6-10-24 - offer_22_sho",  # shopping list has Box 1-8; "Mystery & Steve Box" is a totals summary
+    30: "offer_30_shopping_list",             # Refunds sheet (last sheet) has Item col and gets selected erroneously
+    32: "offer_32_shopping_list (1)",         # same — Refunds sheet has Item col
+}
+
+# Sheet names that should never be selected for allocation data
+_NEVER_SELECT_SHEETS = {"refunds", "sales", "customers", "orders"}
 
 # Preferred sheet names in priority order
 _PREFERRED_SHEETS = [
@@ -100,56 +107,16 @@ def classify_column(header: str | None) -> tuple[str, str | None]:
     if header in SUM_IDENTIFIERS:
         return ("sum", None)
 
-    # Check donations first (before standalone check, since some donations
-    # use the same Sm/Md prefix pattern)
-    if header in DONATION_IDENTIFIERS:
+    # Delegate box classification to box_parser (handles donation, staff,
+    # merged/email, standalone, STANDALONE_NAME_TO_EMAIL, CCI, ? stripping)
+    _, size_tier, box_type = classify_box(header)
+    if box_type == "donation":
         return ("donation", None)
-
-    # Staff who self-pick (not a standard mystery box)
-    if header in STAFF_IDENTIFIERS:
+    if box_type == "staff":
         return ("staff", None)
-
-    # Email pattern → merged mystery box
-    if "@" in header:
-        # But also check if it's a known donation email
-        if header in DONATION_IDENTIFIERS:
-            return ("donation", None)
-        return ("merged", None)
-
-    # Standalone box pattern: [Sm|Md|Lg] [Name] or [Name] [Sm|Md|Lg]
-    size_tier = _infer_size_tier(header)
+    if box_type == "merged":
+        return ("merged", size_tier)
     return ("standalone", size_tier)
-
-
-def _infer_size_tier(header: str) -> str | None:
-    """Infer box size tier from a standalone column header."""
-    if header in BOX_SIZE_OVERRIDES:
-        return BOX_SIZE_OVERRIDES[header]
-
-    h = header.lower().strip()
-
-    # Check prefix pattern: "Sm Name", "Md Name", "Lg Name"
-    if h.startswith("sm ") or h.startswith("small "):
-        return "small"
-    if h.startswith("md ") or h.startswith("med ") or h.startswith("medium "):
-        return "medium"
-    if h.startswith("lg ") or h.startswith("large "):
-        return "large"
-
-    # Check suffix pattern: "Name Sm", "Name sm"
-    if h.endswith(" sm") or h.endswith(" small"):
-        return "small"
-    if h.endswith(" md") or h.endswith(" med") or h.endswith(" medium"):
-        return "medium"
-    if h.endswith(" lg") or h.endswith(" large"):
-        return "large"
-
-    # Market Mystery, 4-Sale, etc. - assume small if no size indicator
-    if "market" in h or "mystery" in h or "4-sale" in h:
-        return "small"
-
-    # Default: unknown size
-    return None
 
 
 def classify_column_extended(header: str | None) -> tuple[str, str | None]:
@@ -203,7 +170,7 @@ def classify_column_extended(header: str | None) -> tuple[str, str | None]:
 
     # Check if this looks like a structural column we missed
     h_lower = h.lower()
-    if any(kw in h_lower for kw in ("column", "actual", "total", "difference")):
+    if any(kw in h_lower for kw in ("column", "actual", "total", "difference", "cost")):
         return ("skip", None)
 
     return ("standalone", size_tier)
@@ -301,13 +268,16 @@ def select_allocation_sheet(wb, offer_id: int):
                     return (ws, sn, hr)
 
     # Fall back to last sheet if it has ID or Item column (matches old behavior)
-    ws = wb[sheets[-1]]
-    if ws.max_row and ws.max_row >= 2:
-        hr = find_header_row(ws)
-        headers = _read_header_row(ws, hr)
-        header_strs = {str(h).strip() for h in headers if h}
-        if "ID" in header_strs or "Item" in header_strs or "Name" in header_strs:
-            return (ws, sheets[-1], hr)
+    # Skip sheets that are clearly not allocation data (refunds, sales, etc.)
+    last_sheet = sheets[-1]
+    if last_sheet.lower() not in _NEVER_SELECT_SHEETS:
+        ws = wb[last_sheet]
+        if ws.max_row and ws.max_row >= 2:
+            hr = find_header_row(ws)
+            headers = _read_header_row(ws, hr)
+            header_strs = {str(h).strip() for h in headers if h}
+            if "ID" in header_strs or "Item" in header_strs or "Name" in header_strs:
+                return (ws, last_sheet, hr)
 
     # Try fallback sheets (Calc tabs — have extra columns but usable)
     for name in _FALLBACK_SHEETS:
@@ -653,6 +623,10 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
         return None
 
     # Collect item names and optional price column
+    # Only include items that have a non-zero allocation to at least one
+    # mystery box column — avoids matching full shopping list rows that
+    # weren't allocated to any box (coffee, cheese, bakery, etc.)
+    mystery_col_indices = {col_idx for col_idx, _, _, _ in mystery_cols}
     xlsx_names = []
     price_col = None
     for i, h in enumerate(headers):
@@ -662,6 +636,7 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
 
     price_data = {}
     name_rows_raw = []  # (item_name, row_tuple)
+    skipped_zero = 0
     for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
         item_name = row[item_col]
         if item_name is None:
@@ -669,6 +644,27 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
         item_name = str(item_name).strip()
         if not item_name:
             continue
+
+        # Skip summary/total rows (e.g. "TOTAL ITEMS" in offer 42)
+        if item_name.upper() in {"TOTAL ITEMS", "TOTAL", "ITEMS TOTAL", "GRAND TOTAL"}:
+            continue
+
+        # Check if this item has any allocation to mystery boxes
+        has_allocation = False
+        for col_idx in mystery_col_indices:
+            val = row[col_idx] if col_idx < len(row) else None
+            if val is not None:
+                try:
+                    if float(val) > 0:
+                        has_allocation = True
+                        break
+                except (ValueError, TypeError):
+                    pass
+
+        if not has_allocation:
+            skipped_zero += 1
+            continue
+
         xlsx_names.append(item_name)
         name_rows_raw.append((item_name, row))
 
@@ -679,6 +675,9 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
                     price_data[item_name] = float(pv)
                 except (ValueError, TypeError):
                     pass
+
+    if skipped_zero:
+        logger.info(f"Offer {offer_id}: skipped {skipped_zero} items with no mystery box allocations")
 
     # Run name matching
     mappings = match_items(offer_id, xlsx_names,
@@ -700,7 +699,10 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
         row_data = {"id": item_id}
         for col_idx, col_header, col_type, _ in mystery_cols:
             val = row[col_idx] if col_idx < len(row) else None
-            raw = float(val) if val else 0.0
+            try:
+                raw = float(val) if val else 0.0
+            except (ValueError, TypeError):
+                raw = 0.0
             row_data[col_header] = int(raw) if raw == int(raw) else raw
         rows.append(row_data)
 
@@ -708,7 +710,10 @@ def _process_with_names(ws, headers, header_row, offer_id, filepath,
             charity_data = {"id": item_id}
             for col_idx, col_header in charity_cols:
                 val = row[col_idx] if col_idx < len(row) else None
-                raw = float(val) if val else 0.0
+                try:
+                    raw = float(val) if val else 0.0
+                except (ValueError, TypeError):
+                    raw = 0.0
                 charity_data[col_header] = int(raw) if raw == int(raw) else raw
             charity_rows.append(charity_data)
 
@@ -754,10 +759,19 @@ def _process_transposed(ws, header_row, offer_id, filepath, sheet_name,
         logger.warning(f"Offer {offer_id}: transposed sheet has no box data")
         return None
 
+    # Filter to items that have at least one non-zero allocation
+    allocated_items = set()
+    for allocations in box_data.values():
+        allocated_items.update(allocations.keys())
+    items_to_match = [n for n in item_names if n in allocated_items]
+    skipped_zero = len(item_names) - len(items_to_match)
+    if skipped_zero:
+        logger.info(f"Offer {offer_id}: skipped {skipped_zero} items with no allocations (transposed)")
+
     # Try to match item names to DB IDs
     try:
         from allocator.name_matcher import match_items
-        mappings = match_items(offer_id, item_names)
+        mappings = match_items(offer_id, items_to_match)
     except ImportError:
         logger.warning(f"Offer {offer_id}: name_matcher not available for transposed")
         return None
@@ -817,7 +831,7 @@ def _process_transposed(ws, header_row, offer_id, filepath, sheet_name,
     box_names = [bn for bn, _, _ in mystery_boxes]
     box_sizes = {bn: sz for bn, _, sz in mystery_boxes}
 
-    match_quality = len(item_to_id) / len(item_names) if item_names else 0.0
+    match_quality = len(item_to_id) / len(items_to_match) if items_to_match else 0.0
 
     metadata = {
         "offer_id": offer_id,

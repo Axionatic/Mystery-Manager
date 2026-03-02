@@ -25,11 +25,9 @@ from allocator.config import (
 
 # Size keyword → normalized tier
 _SIZE_MAP = {
-    "sm": "small", "sml": "small", "small": "small",
-    "md": "medium", "med": "medium", "medium": "medium",
-    "lg": "large", "lge": "large", "large": "large",
-    # Single-letter codes used in offer 24
-    "m": "medium", "l": "large", "s": "small",
+    "s": "small", "sm": "small", "sml": "small", "small": "small",
+    "m": "medium", "md": "medium", "med": "medium", "medium": "medium",
+    "l": "large", "lg": "large", "lge": "large", "large": "large",
 }
 
 # Pattern: optional "?" or "(?) " prefix
