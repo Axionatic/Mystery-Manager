@@ -6,10 +6,12 @@ identifiers.json
 # Business data (customer orders, historical allocations)
 historical/
 cleaned/
+cleaned_llm/
 offer_*.xlsx
 
 # Compare run outputs
 output/
+benchmark_results/
 
 # Cached LLM name match results
 mappings/

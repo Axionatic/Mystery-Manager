@@ -11,14 +11,22 @@ def call_claude_cli(
     timeout: int = 120,
     model: str = "haiku",
     output_format: str = "text",
+    lightweight: bool = False,
 ) -> str | None:
     """
     Call Claude CLI with the given prompt.
+
+    Args:
+        lightweight: If True, disable built-in tools and session persistence
+            to reduce token overhead and startup time. Use for simple
+            extraction tasks that only need text output.
 
     Returns the CLI output stripped of whitespace, or None if the call failed.
     """
     try:
         cmd = ["claude", "-p", "--model", model]
+        if lightweight:
+            cmd.extend(["--tools", "", "--no-session-persistence"])
         if output_format != "text":
             cmd.extend(["--output-format", output_format])
 

@@ -15,7 +15,13 @@ import csv
 import json
 import logging
 import re
+import sys
 from pathlib import Path
+
+# When run as `python3 allocator/clean_history.py`, Python puts allocator/ on
+# sys.path, causing allocator.py to shadow the allocator package. Fix by
+# ensuring the project root is on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 
@@ -34,6 +40,7 @@ logger = logging.getLogger(__name__)
 HISTORICAL_DIR = Path(__file__).parent.parent / "historical"
 OLDER_DIR = HISTORICAL_DIR / "older"
 CLEANED_DIR = Path(__file__).parent.parent / "cleaned"
+CLEANED_LLM_DIR = Path(__file__).parent.parent / "cleaned_llm"
 
 # Offers to skip entirely (no usable mystery data)
 # Note: "Week 6 Shopping List.xlsx" is also excluded — it has no offer_* prefix so
@@ -108,7 +115,7 @@ def classify_column(header: str | None) -> tuple[str, str | None]:
         return ("sum", None)
 
     # Delegate box classification to box_parser (handles donation, staff,
-    # merged/email, standalone, STANDALONE_NAME_TO_EMAIL, CCI, ? stripping)
+    # merged/email, standalone, STANDALONE_NAME_TO_EMAIL, charity, ? stripping)
     _, size_tier, box_type = classify_box(header)
     if box_type == "donation":
         return ("donation", None)
@@ -123,7 +130,7 @@ def classify_column_extended(header: str | None) -> tuple[str, str | None]:
     """
     Extended column classifier with box_parser for improved box detection.
 
-    Handles older offers' naming conventions (Lge CCI, ?Sm Boatshed, etc.)
+    Handles older offers' naming conventions (Lge Charity, ?Sm Boatshed, etc.)
     that the basic classify_column misses.
     """
     if header is None:
@@ -293,7 +300,7 @@ def select_allocation_sheet(wb, offer_id: int):
     if ws.max_row and ws.max_row >= 2:
         hr = find_header_row(ws)
         headers = _read_header_row(ws, hr)
-        # Check for box-like columns (Lge CCI, Med1, M Box 1, etc.)
+        # Check for box-like columns (Lge Charity, Med1, M Box 1, etc.)
         box_count = 0
         for h in headers:
             if h is None:
@@ -864,7 +871,7 @@ def _process_transposed(ws, header_row, offer_id, filepath, sheet_name,
 def _process_minimal(ws, headers, header_row, offer_id, filepath,
                      sheet_name, source_dir, tier):
     """Best-effort processing for Tier D sheets with box columns in shopping list."""
-    # Use extended classifier which handles Lge CCI, Med1, M Box 1, etc.
+    # Use extended classifier which handles Lge Charity, Med1, M Box 1, etc.
     clsf, id_col, item_col, mystery_cols, charity_cols, donation_cols = \
         _classify_headers(headers, use_extended=True)
 
@@ -990,6 +997,230 @@ def write_charity_csv(offer_id: int, rows: list[dict], output_dir: Path) -> Path
 
 
 # ---------------------------------------------------------------------------
+# LLM-based extraction (Tier C/D non-standard workbooks)
+# ---------------------------------------------------------------------------
+
+# Offers with XLSX files in historical/older/ that are candidates for LLM extraction.
+# Excludes 44 (supplier purchasing list only — no mystery data).
+LLM_TARGET_OFFERS = {
+    22, 23, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42,
+    45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+}
+
+
+def _process_with_llm(offer_id: int, xlsx_path: Path, force: bool = False) -> dict | None:
+    """
+    Process a workbook using LLM extraction + name matching.
+
+    Returns the same {metadata, mystery_rows, charity_rows} format as
+    _process_with_ids/_process_with_names, or None on failure.
+    """
+    from allocator.name_matcher import match_items
+    from allocator.sheet_analyzer import analyze_and_extract
+
+    extraction = analyze_and_extract(offer_id, xlsx_path, force=force)
+    if extraction is None:
+        return None
+
+    boxes = extraction.get("boxes", [])
+    items = extraction.get("items", [])
+    charity_boxes = extraction.get("charity_boxes", [])
+    charity_items = extraction.get("charity_items", [])
+
+    if not boxes or not items:
+        logger.warning(f"Offer {offer_id}: LLM extraction returned no boxes or items")
+        return None
+
+    # Collect item names for DB matching
+    xlsx_names = [item["name"] for item in items]
+    mappings = match_items(offer_id, xlsx_names)
+
+    if not mappings:
+        logger.warning(f"Offer {offer_id}: no items matched to DB")
+        return None
+
+    # Build box headers for CSV columns
+    box_headers = [b["header"] for b in boxes]
+    box_sizes = {}
+    box_types = {}
+    for b in boxes:
+        header = b["header"]
+        size = b.get("size", "unknown")
+        box_sizes[header] = size if size != "unknown" else None
+        box_types[header] = "standalone"
+
+    # Build mystery rows
+    mystery_rows = []
+    for item in items:
+        name = item["name"]
+        if name not in mappings:
+            continue
+        item_id = mappings[name]["id"]
+        row_data = {"id": item_id}
+        for i, header in enumerate(box_headers):
+            qty = item["allocations"][i] if i < len(item["allocations"]) else 0
+            row_data[header] = int(qty) if isinstance(qty, float) and qty == int(qty) else qty
+        mystery_rows.append(row_data)
+
+    # Build charity rows
+    charity_headers = [b["header"] for b in charity_boxes]
+    charity_rows = []
+    if charity_headers and charity_items:
+        for item in charity_items:
+            name = item["name"]
+            if name not in mappings:
+                continue
+            item_id = mappings[name]["id"]
+            row_data = {"id": item_id}
+            for i, header in enumerate(charity_headers):
+                qty = item["allocations"][i] if i < len(item["allocations"]) else 0
+                row_data[header] = int(qty) if isinstance(qty, float) and qty == int(qty) else qty
+            charity_rows.append(row_data)
+
+    match_quality = len(mappings) / len(xlsx_names) if xlsx_names else 0.0
+
+    metadata = {
+        "offer_id": offer_id,
+        "filename": xlsx_path.name,
+        "sheet_name": extraction.get("sheet_used", "?"),
+        "total_items": len(mystery_rows),
+        "box_count": len(boxes),
+        "box_names": box_headers,
+        "box_sizes": box_sizes,
+        "box_types": box_types,
+        "charity_names": charity_headers,
+        "donation_names": [],
+        "classifications": [],
+        "tier": _determine_tier(offer_id, "historical/older"),
+        "source_dir": "historical/older",
+        "name_match_quality": round(match_quality, 3),
+        "extraction_method": "llm",
+        "llm_notes": extraction.get("notes", ""),
+    }
+
+    return {
+        "metadata": metadata,
+        "mystery_rows": mystery_rows,
+        "charity_rows": charity_rows,
+    }
+
+
+def run_llm_extraction(
+    offer_ids: set[int] | None = None,
+    max_workers: int = 4,
+    force: bool = False,
+) -> dict:
+    """
+    Run LLM extraction on target offers with parallel workers and progress bar.
+
+    Args:
+        offer_ids: Specific offers to process (default: LLM_TARGET_OFFERS)
+        max_workers: Concurrent Sonnet calls (default 4)
+        force: Re-extract even if cached
+
+    Returns summary dict.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
+
+    if offer_ids is None:
+        offer_ids = LLM_TARGET_OFFERS
+
+    output_dir = CLEANED_LLM_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Discover files
+    files = discover_files(HISTORICAL_DIR, OLDER_DIR)
+    targets = {
+        oid: files[oid] for oid in sorted(offer_ids) if oid in files and oid not in SKIP_OFFERS
+    }
+
+    if not targets:
+        print("No target offers found.")
+        return {"offers": {}}
+
+    print(f"LLM extraction: {len(targets)} offers, {max_workers} workers")
+
+    summary = {"offers": {}}
+    errors = []
+
+    def _process_one(offer_id: int) -> tuple[int, dict | None, str | None]:
+        filepath, source_dir = targets[offer_id]
+        try:
+            result = _process_with_llm(offer_id, filepath, force=force)
+            if result is None:
+                return (offer_id, None, "extraction returned None")
+            return (offer_id, result, None)
+        except Exception as e:
+            return (offer_id, None, str(e))
+
+    with Progress(
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.fields[status]}"),
+    ) as progress:
+        task = progress.add_task(
+            "Extracting", total=len(targets), status=""
+        )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_process_one, oid): oid for oid in targets
+            }
+
+            for future in as_completed(futures):
+                offer_id, result, error = future.result()
+
+                if error:
+                    errors.append((offer_id, error))
+                    progress.update(task, advance=1, status=f"offer {offer_id}: FAILED")
+                    continue
+
+                meta = result["metadata"]
+
+                # Write CSVs
+                mystery_path = write_mystery_csv(offer_id, result["mystery_rows"], output_dir)
+                charity_path = write_charity_csv(offer_id, result["charity_rows"], output_dir)
+
+                status_parts = []
+                if mystery_path:
+                    status_parts.append(
+                        f"offer {offer_id}: {meta['box_count']} boxes, "
+                        f"{meta['total_items']} items"
+                    )
+                if charity_path:
+                    status_parts.append("+ charity")
+
+                progress.update(
+                    task, advance=1,
+                    status=" ".join(status_parts) if status_parts else f"offer {offer_id}: no data"
+                )
+
+                summary["offers"][str(offer_id)] = meta
+
+    # Print summary
+    print(f"\nCompleted: {len(summary['offers'])}/{len(targets)} offers")
+    if errors:
+        print(f"Errors ({len(errors)}):")
+        for oid, err in sorted(errors):
+            print(f"  Offer {oid}: {err}")
+
+    for oid in sorted(int(k) for k in summary["offers"]):
+        meta = summary["offers"][str(oid)]
+        quality = meta.get("name_match_quality", 0)
+        print(
+            f"  Offer {oid}: {meta['box_count']} boxes, "
+            f"{meta['total_items']} items, "
+            f"match {quality:.0%} — {meta.get('sheet_name', '?')}"
+        )
+
+    print(f"\nOutput: {output_dir}/")
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1073,6 +1304,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Clean historical XLSX files")
     parser.add_argument("--no-older", action="store_true",
                        help="Skip historical/older/ directory")
+    parser.add_argument("--llm-extract", action="store_true",
+                       help="Run LLM extraction on Tier C/D workbooks (uses Sonnet)")
+    parser.add_argument("--force", action="store_true",
+                       help="Force re-extraction (ignore cached results)")
     args = parser.parse_args()
 
-    clean_all(include_older=not args.no_older)
+    if args.llm_extract:
+        run_llm_extraction(force=args.force)
+    else:
+        clean_all(include_older=not args.no_older)
