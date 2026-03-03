@@ -23,6 +23,7 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from allocator.allocator import allocate
+from allocator.config import CHARITY_NAME
 from allocator.strategies import list_strategies
 
 
@@ -102,7 +103,7 @@ def build_box_column_map(result, xlsx_headers):
                     unmapped.append((sbox, False))
 
     # Map charity boxes
-    charity_keywords = {"st andrews", "cci", "charity", "donation", "spc", "spsc"}
+    charity_keywords = {"st andrews", CHARITY_NAME.lower(), "charity", "donation", "spc", "spsc"}
     for charity in result.charity:
         matched = False
         for h, ci in header_to_col.items():

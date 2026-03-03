@@ -2,7 +2,7 @@
 Pluggable allocation strategies.
 
 A strategy is a callable (AllocationResult) -> None that fills box.allocations
-in place. Everything before (data loading, box building) and after (CCI
+in place. Everything before (data loading, box building) and after (charity
 allocation, stock) is shared infrastructure in allocate().
 """
 

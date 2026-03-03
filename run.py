@@ -9,7 +9,7 @@ Options:
     --no-tui        Skip interactive TUI (use auto-detected boxes as-is)
     --no-llm        Skip LLM review pass
     --parse-notes   Use LLM to parse buyer notes into exclusion rules
-    --charity NAME  Add charity recipient (default: CCI). Can be repeated.
+    --charity NAME  Add charity recipient (default: CHARITY_NAME env var). Can be repeated.
     --output FILE   Write tab-delimited output to file instead of stdout
 """
 
@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--parse-notes", action="store_true", help="Use LLM to parse buyer notes")
     parser.add_argument(
         "--charity", action="append", default=None,
-        help="Charity recipient name (can be repeated, default: CCI)",
+        help="Charity recipient name (can be repeated)",
     )
     parser.add_argument("--output", type=Path, help="Write output to file")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
@@ -59,7 +59,8 @@ def main():
         console.print(f"[red]File not found: {args.xlsx}[/]")
         sys.exit(1)
 
-    charity_names = args.charity or ["CCI"]
+    from allocator.config import CHARITY_NAME
+    charity_names = args.charity or [CHARITY_NAME]
 
     # Import here to avoid slow startup for --help
     from allocator.allocator import allocate, build_boxes_from_db, print_summary

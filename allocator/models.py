@@ -82,11 +82,11 @@ class MysteryBox:
 
 @dataclass
 class CharityBox:
-    """A charity recipient (CCI, St Andrews)."""
+    """A charity recipient box."""
 
     name: str
     allocations: dict[int, int] = field(default_factory=dict)  # item_id -> qty
-    target_value: int = 0  # computed from CCI formula
+    target_value: int = 0  # computed from charity formula
 
 
 @dataclass

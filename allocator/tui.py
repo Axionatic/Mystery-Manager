@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from allocator.config import BOX_TIERS
+from allocator.config import BOX_TIERS, CHARITY_NAME
 from allocator.models import ExclusionRule, MysteryBox
 
 console = Console()
@@ -252,7 +252,7 @@ def _run_all_strategies(
                 kwargs = {
                     "strategy": strat,
                     "boxes": copy.deepcopy(boxes),
-                    "charity_names": charity_names or ["CCI"],
+                    "charity_names": charity_names or [CHARITY_NAME],
                 }
                 if strat == "local-search" and dw_allocations is not None:
                     kwargs["bootstrap_allocations"] = dw_allocations

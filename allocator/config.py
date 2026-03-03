@@ -155,9 +155,10 @@ SKIP_COLUMN_IDENTIFIERS = {
     "Buyer Notes", "buyer notes",
 }
 
-# CCI allocation target (loaded from .env)
-CCI_BASE_PERCENT = float(os.environ.get("CCI_BASE_PERCENT", "0.05"))
-CCI_GIVING_MULTIPLIER = float(os.environ.get("CCI_GIVING_MULTIPLIER", "1.35"))
+# Charity allocation target (loaded from .env)
+CHARITY_NAME = os.environ.get("CHARITY_NAME", "Charity")
+CHARITY_BASE_PERCENT = float(os.environ.get("CHARITY_BASE_PERCENT", "0.05"))
+CHARITY_GIVING_MULTIPLIER = float(os.environ.get("CHARITY_GIVING_MULTIPLIER", "1.35"))
 
 # Category IDs from part_categories table
 CATEGORY_FRUIT = 2

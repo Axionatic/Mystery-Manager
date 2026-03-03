@@ -1,7 +1,7 @@
 """
 Main allocation orchestrator.
 
-Shared infrastructure (data loading, box building, CCI, output) lives here.
+Shared infrastructure (data loading, box building, charity, output) lives here.
 The box-filling strategy is pluggable — see allocator/strategies/.
 """
 
@@ -12,8 +12,9 @@ from pathlib import Path
 from allocator.categorizer import assign_classification, assign_fungible_group, category_name
 from allocator.config import (
     BOX_TIERS,
-    CCI_BASE_PERCENT,
-    CCI_GIVING_MULTIPLIER,
+    CHARITY_BASE_PERCENT,
+    CHARITY_GIVING_MULTIPLIER,
+    CHARITY_NAME,
     DONATION_IDENTIFIERS,
     STAFF_IDENTIFIERS,
     PREFERENCE_FRUIT_ONLY,
@@ -183,39 +184,39 @@ def build_boxes_from_db(offer_id: int) -> list[MysteryBox]:
     return boxes
 
 
-def compute_cci_target(offer_id: int) -> int:
-    """Compute CCI allocation target in cents."""
+def compute_charity_target(offer_id: int) -> int:
+    """Compute charity allocation target in cents."""
     gross_retail = fetch_offer_gross_retail(offer_id)
     giving = fetch_customer_giving(offer_id)
-    target = int(float(gross_retail) * CCI_BASE_PERCENT + float(giving) * CCI_GIVING_MULTIPLIER)
+    target = int(float(gross_retail) * CHARITY_BASE_PERCENT + float(giving) * CHARITY_GIVING_MULTIPLIER)
     logger.info(
-        f"CCI target: ${target/100:.2f} "
+        f"Charity target: ${target/100:.2f} "
         f"(gross=${gross_retail/100:.2f}, giving=${giving/100:.2f})"
     )
     return target
 
 
 # ---------------------------------------------------------------------------
-# CCI allocation (shared infrastructure, not strategy-specific)
+# Charity allocation (shared infrastructure, not strategy-specific)
 # ---------------------------------------------------------------------------
 
-def _allocate_cci(result: AllocationResult, cci_target: int) -> None:
+def _allocate_charity(result: AllocationResult, charity_target: int) -> None:
     """
-    Allocate remaining overage to charity (CCI + St Andrews) toward target.
+    Allocate remaining overage to charity toward target.
 
-    Deliberately fills toward the CCI target, preferring higher-value items.
-    Remaining overage after CCI target → stock.
+    Deliberately fills toward the charity target, preferring higher-value items.
+    Remaining overage after charity target → stock.
     """
     if not result.charity:
         return
 
-    # Use the first charity box (CCI) as primary target
+    # Use the first charity box as primary target
     primary = result.charity[0]
-    primary.target_value = cci_target
+    primary.target_value = charity_target
 
     # Split target across charity recipients proportionally if multiple
     if len(result.charity) > 1:
-        per_charity = cci_target // len(result.charity)
+        per_charity = charity_target // len(result.charity)
         for c in result.charity:
             c.target_value = per_charity
 
@@ -278,7 +279,7 @@ def allocate(
         offer_id: The offer ID to allocate for
         xlsx_path: Path to the tweaked shopping list XLSX
         boxes: Pre-configured mystery boxes (from TUI). If None, auto-detect.
-        charity_names: Charity recipient names. Defaults to ["CCI"].
+        charity_names: Charity recipient names. Defaults to [CHARITY_NAME].
         strategy: Name of the allocation strategy (default: deal-topup).
         bootstrap_allocations: Pre-computed box allocations to seed the strategy
             with (one dict per box, matching box order). Used by compare.py to
@@ -288,7 +289,7 @@ def allocate(
         AllocationResult with all allocations
     """
     if charity_names is None:
-        charity_names = ["CCI"]
+        charity_names = [CHARITY_NAME]
 
     # Load data
     categories = fetch_categories()
@@ -336,10 +337,10 @@ def allocate(
     logger.info(f"Running strategy: {strategy}")
     strategy_fn(result)
 
-    # CCI allocation (shared infrastructure)
-    logger.info("Phase 3: CCI allocation")
-    cci_target = compute_cci_target(offer_id)
-    _allocate_cci(result, cci_target)
+    # Charity allocation (shared infrastructure)
+    logger.info("Phase 3: Charity allocation")
+    charity_target = compute_charity_target(offer_id)
+    _allocate_charity(result, charity_target)
 
     return result
 
