@@ -41,12 +41,16 @@ HISTORICAL_DIR = Path(__file__).parent.parent / "historical"
 OLDER_DIR = HISTORICAL_DIR / "older"
 CLEANED_DIR = Path(__file__).parent.parent / "cleaned"
 CLEANED_LLM_DIR = Path(__file__).parent.parent / "cleaned_llm"
+MAPPINGS_DIR = Path(__file__).parent.parent / "mappings"
 
 # Offers to skip entirely (no usable mystery data)
 # Note: "Week 6 Shopping List.xlsx" is also excluded — it has no offer_* prefix so
 # discover_files() skips it automatically. It uses non-standard price tiers and is
 # not useful for algorithm comparison or ML training.
-SKIP_OFFERS = {44}
+# Offer 28: formula-driven workbook (pre-dates this project's structure); all
+# per-box cells are Excel formulas with no cached values readable by openpyxl.
+# Box values also don't match the 30/60/90 tier structure.
+SKIP_OFFERS = {28, 44}
 
 # Per-offer sheet overrides: {offer_id: sheet_name}
 SHEET_OVERRIDES = {
@@ -1008,17 +1012,71 @@ LLM_TARGET_OFFERS = {
 }
 
 
-def _process_with_llm(offer_id: int, xlsx_path: Path, force: bool = False) -> dict | None:
+def _process_with_llm(
+    offer_id: int,
+    xlsx_path: Path,
+    force: bool = False,
+    method: str = "haiku-whole",
+    workbook_info=None,
+) -> dict | None:
     """
     Process a workbook using LLM extraction + name matching.
+
+    Args:
+        offer_id: The offer ID.
+        xlsx_path: Path to the XLSX file.
+        force: Ignore all caches and re-extract.
+        method: Extraction strategy name (must be in benchmark_extraction.STRATEGY_RUNNERS).
+        workbook_info: Pre-loaded WorkbookInfo (avoids redundant openpyxl loads when
+            processing multiple offers in parallel). Loaded on-demand if None.
 
     Returns the same {metadata, mystery_rows, charity_rows} format as
     _process_with_ids/_process_with_names, or None on failure.
     """
+    # Lazy import — benchmark_extraction imports from clean_history at module level,
+    # so we must defer this import to avoid a circular dependency.
+    import benchmark_extraction as _bx
     from allocator.name_matcher import match_items
-    from allocator.sheet_analyzer import analyze_and_extract
 
-    extraction = analyze_and_extract(offer_id, xlsx_path, force=force)
+    # 1. Check production cache: mappings/offer_N_llm_extraction_{method}.json
+    prod_cache = MAPPINGS_DIR / f"offer_{offer_id}_llm_extraction_{method}.json"
+    extraction = None
+    if not force and prod_cache.exists():
+        try:
+            extraction = json.loads(prod_cache.read_text())
+            logger.info(f"Offer {offer_id}: using production cache ({method})")
+        except (json.JSONDecodeError, OSError):
+            extraction = None
+
+    # 2. Fall back to benchmark cache: benchmark_results/offer_N_{method}.json
+    if extraction is None and not force:
+        bench = _bx._load_cached(offer_id, method)
+        if bench is not None and bench.success:
+            extraction = dict(bench.raw_json)
+            extraction.setdefault("sheet_used", bench.notes)
+            extraction.setdefault("notes", bench.notes)
+            logger.info(f"Offer {offer_id}: using benchmark cache ({method})")
+
+    # 3. Run extraction via strategy runner
+    if extraction is None:
+        if workbook_info is None:
+            workbook_info = _bx._load_workbook_info(offer_id, xlsx_path)
+        result = _bx.STRATEGY_RUNNERS[method](offer_id, workbook_info)
+        if not result.success:
+            logger.warning(
+                f"Offer {offer_id}: {method} extraction failed: {result.error}"
+            )
+            return None
+        extraction = dict(result.raw_json)
+        extraction.setdefault("sheet_used", result.notes)
+        extraction.setdefault("notes", result.notes)
+        # Save to production cache
+        try:
+            MAPPINGS_DIR.mkdir(parents=True, exist_ok=True)
+            prod_cache.write_text(json.dumps(extraction, indent=2))
+        except OSError as e:
+            logger.warning(f"Offer {offer_id}: could not save production cache: {e}")
+
     if extraction is None:
         return None
 
@@ -1094,7 +1152,7 @@ def _process_with_llm(offer_id: int, xlsx_path: Path, force: bool = False) -> di
         "tier": _determine_tier(offer_id, "historical/older"),
         "source_dir": "historical/older",
         "name_match_quality": round(match_quality, 3),
-        "extraction_method": "llm",
+        "extraction_method": f"llm-{method}",
         "llm_notes": extraction.get("notes", ""),
     }
 
@@ -1109,28 +1167,32 @@ def run_llm_extraction(
     offer_ids: set[int] | None = None,
     max_workers: int = 4,
     force: bool = False,
+    methods: list[str] | None = None,
 ) -> dict:
     """
     Run LLM extraction on target offers with parallel workers and progress bar.
 
     Args:
         offer_ids: Specific offers to process (default: LLM_TARGET_OFFERS)
-        max_workers: Concurrent Sonnet calls (default 4)
+        max_workers: Concurrent LLM calls per method (default 4)
         force: Re-extract even if cached
+        methods: Extraction method(s) to run (default: ["haiku-whole"]).
+            Each method runs sequentially; offers within a method run in parallel.
 
-    Returns summary dict.
+    Returns summary dict keyed by method.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    # Lazy import to avoid circular dependency (benchmark_extraction imports clean_history)
+    import benchmark_extraction as _bx
     from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 
+    if methods is None:
+        methods = ["haiku-whole"]
     if offer_ids is None:
         offer_ids = LLM_TARGET_OFFERS
 
-    output_dir = CLEANED_LLM_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Discover files
+    # Discover target files once
     files = discover_files(HISTORICAL_DIR, OLDER_DIR)
     targets = {
         oid: files[oid] for oid in sorted(offer_ids) if oid in files and oid not in SKIP_OFFERS
@@ -1138,86 +1200,106 @@ def run_llm_extraction(
 
     if not targets:
         print("No target offers found.")
-        return {"offers": {}}
+        return {}
 
-    print(f"LLM extraction: {len(targets)} offers, {max_workers} workers")
-
-    summary = {"offers": {}}
-    errors = []
-
-    def _process_one(offer_id: int) -> tuple[int, dict | None, str | None]:
-        filepath, source_dir = targets[offer_id]
+    # Pre-load all workbooks once (avoids redundant openpyxl loads across methods)
+    print(f"Pre-loading {len(targets)} workbooks...")
+    workbooks: dict[int, object] = {}
+    for oid, (filepath, _) in targets.items():
         try:
-            result = _process_with_llm(offer_id, filepath, force=force)
-            if result is None:
-                return (offer_id, None, "extraction returned None")
-            return (offer_id, result, None)
+            workbooks[oid] = _bx._load_workbook_info(oid, filepath)
         except Exception as e:
-            return (offer_id, None, str(e))
+            logger.warning(f"Offer {oid}: could not load workbook: {e}")
 
-    with Progress(
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TextColumn("{task.fields[status]}"),
-    ) as progress:
-        task = progress.add_task(
-            "Extracting", total=len(targets), status=""
-        )
+    overall_summary: dict[str, dict] = {}
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_process_one, oid): oid for oid in targets
-            }
+    for method in methods:
+        print(f"\n[{method}] {len(targets)} offers, {max_workers} workers")
+        output_dir = CLEANED_LLM_DIR / method
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-            for future in as_completed(futures):
-                offer_id, result, error = future.result()
+        summary: dict[str, dict] = {}
+        errors: list[tuple[int, str]] = []
 
-                if error:
-                    errors.append((offer_id, error))
-                    progress.update(task, advance=1, status=f"offer {offer_id}: FAILED")
-                    continue
-
-                meta = result["metadata"]
-
-                # Write CSVs
-                mystery_path = write_mystery_csv(offer_id, result["mystery_rows"], output_dir)
-                charity_path = write_charity_csv(offer_id, result["charity_rows"], output_dir)
-
-                status_parts = []
-                if mystery_path:
-                    status_parts.append(
-                        f"offer {offer_id}: {meta['box_count']} boxes, "
-                        f"{meta['total_items']} items"
-                    )
-                if charity_path:
-                    status_parts.append("+ charity")
-
-                progress.update(
-                    task, advance=1,
-                    status=" ".join(status_parts) if status_parts else f"offer {offer_id}: no data"
+        def _process_one(offer_id: int, meth: str = method) -> tuple[int, dict | None, str | None]:
+            filepath, _ = targets[offer_id]
+            wb_info = workbooks.get(offer_id)
+            try:
+                result = _process_with_llm(
+                    offer_id, filepath,
+                    force=force, method=meth, workbook_info=wb_info,
                 )
+                if result is None:
+                    return (offer_id, None, "extraction returned None")
+                return (offer_id, result, None)
+            except Exception as e:
+                return (offer_id, None, str(e))
 
-                summary["offers"][str(offer_id)] = meta
+        with Progress(
+            TextColumn("[bold]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("{task.fields[status]}"),
+        ) as progress:
+            task = progress.add_task(
+                f"Extracting ({method})", total=len(targets), status=""
+            )
 
-    # Print summary
-    print(f"\nCompleted: {len(summary['offers'])}/{len(targets)} offers")
-    if errors:
-        print(f"Errors ({len(errors)}):")
-        for oid, err in sorted(errors):
-            print(f"  Offer {oid}: {err}")
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(_process_one, oid): oid for oid in targets
+                }
 
-    for oid in sorted(int(k) for k in summary["offers"]):
-        meta = summary["offers"][str(oid)]
-        quality = meta.get("name_match_quality", 0)
-        print(
-            f"  Offer {oid}: {meta['box_count']} boxes, "
-            f"{meta['total_items']} items, "
-            f"match {quality:.0%} — {meta.get('sheet_name', '?')}"
-        )
+                for future in as_completed(futures):
+                    offer_id, result, error = future.result()
 
-    print(f"\nOutput: {output_dir}/")
-    return summary
+                    if error:
+                        errors.append((offer_id, error))
+                        progress.update(task, advance=1, status=f"offer {offer_id}: FAILED")
+                        continue
+
+                    meta = result["metadata"]
+
+                    # Write CSVs to method-specific output dir
+                    mystery_path = write_mystery_csv(offer_id, result["mystery_rows"], output_dir)
+                    charity_path = write_charity_csv(offer_id, result["charity_rows"], output_dir)
+
+                    status_parts = []
+                    if mystery_path:
+                        status_parts.append(
+                            f"offer {offer_id}: {meta['box_count']} boxes, "
+                            f"{meta['total_items']} items"
+                        )
+                    if charity_path:
+                        status_parts.append("+ charity")
+
+                    progress.update(
+                        task, advance=1,
+                        status=" ".join(status_parts) if status_parts else f"offer {offer_id}: no data",
+                    )
+
+                    summary[str(offer_id)] = meta
+
+        # Print per-method summary
+        print(f"\n[{method}] Completed: {len(summary)}/{len(targets)} offers")
+        if errors:
+            print(f"Errors ({len(errors)}):")
+            for oid, err in sorted(errors):
+                print(f"  Offer {oid}: {err}")
+
+        for oid in sorted(int(k) for k in summary):
+            meta = summary[str(oid)]
+            quality = meta.get("name_match_quality", 0)
+            print(
+                f"  Offer {oid}: {meta['box_count']} boxes, "
+                f"{meta['total_items']} items, "
+                f"match {quality:.0%} — {meta.get('sheet_name', '?')}"
+            )
+
+        print(f"Output: {output_dir}/")
+        overall_summary[method] = summary
+
+    return overall_summary
 
 
 # ---------------------------------------------------------------------------
@@ -1225,7 +1307,8 @@ def run_llm_extraction(
 # ---------------------------------------------------------------------------
 
 def clean_all(historical_dir: Path = None, output_dir: Path = None,
-              include_older: bool = True) -> dict:
+              include_older: bool = True,
+              only_offers: set[int] | None = None) -> dict:
     """
     Process all historical XLSX files and produce clean CSVs.
 
@@ -1233,6 +1316,7 @@ def clean_all(historical_dir: Path = None, output_dir: Path = None,
         historical_dir: Primary directory (default: historical/)
         output_dir: Output directory for CSVs (default: cleaned/)
         include_older: Also scan historical/older/ (default: True)
+        only_offers: If set, process only these offer IDs.
 
     Returns summary dict with metadata for all offers.
     """
@@ -1255,6 +1339,8 @@ def clean_all(historical_dir: Path = None, output_dir: Path = None,
     summary = {"offers": {}}
 
     for offer_id in sorted(files.keys()):
+        if only_offers is not None and offer_id not in only_offers:
+            continue
         filepath, source_dir = files[offer_id]
         print(f"\nProcessing offer {offer_id} ({source_dir})...")
 
@@ -1304,13 +1390,39 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Clean historical XLSX files")
     parser.add_argument("--no-older", action="store_true",
                        help="Skip historical/older/ directory")
+    parser.add_argument("--only-offers", type=str, default=None,
+                       help="Process only these offers, comma-separated with optional ranges "
+                            "(e.g. 55-63 or 55,60,70-80)")
     parser.add_argument("--llm-extract", action="store_true",
-                       help="Run LLM extraction on Tier C/D workbooks (uses Sonnet)")
+                       help="Run LLM extraction on Tier C/D workbooks")
+    parser.add_argument("--llm-method", type=str, default="haiku-whole",
+                       help="LLM extraction method(s), comma-separated. "
+                            "Default: haiku-whole. Options: sonnet-low, haiku-whole, "
+                            "haiku-per-tab, sonnet-low-per-tab, two-stage-haiku, "
+                            "two-stage-sonnet, two-stage-smart-haiku, two-stage-smart-sonnet")
     parser.add_argument("--force", action="store_true",
                        help="Force re-extraction (ignore cached results)")
     args = parser.parse_args()
 
+    only_offers = None
+    if args.only_offers:
+        only_offers = set()
+        for part in args.only_offers.split(","):
+            part = part.strip()
+            if "-" in part:
+                lo, hi = part.split("-", 1)
+                only_offers.update(range(int(lo), int(hi) + 1))
+            else:
+                only_offers.add(int(part))
+
     if args.llm_extract:
-        run_llm_extraction(force=args.force)
+        import benchmark_extraction as _bx_validate
+        methods = [m.strip() for m in args.llm_method.split(",")]
+        invalid = [m for m in methods if m not in _bx_validate.STRATEGY_RUNNERS]
+        if invalid:
+            print(f"Unknown method(s): {invalid}")
+            print(f"Available: {', '.join(_bx_validate.ALL_STRATEGIES)}")
+            sys.exit(1)
+        run_llm_extraction(force=args.force, methods=methods, offer_ids=only_offers)
     else:
-        clean_all(include_older=not args.no_older)
+        clean_all(include_older=not args.no_older, only_offers=only_offers)

@@ -88,6 +88,7 @@ class StrategyResult:
     error: str | None = None
     notes: str = ""
     stage_times: dict[str, float] = field(default_factory=dict)
+    raw_response: str | None = None
 
     @property
     def success(self) -> bool:
@@ -692,7 +693,7 @@ def _match_sheet_name(returned: str, available: list[str]) -> str | None:
 def run_sonnet_low(offer_id: int, info: WorkbookInfo) -> StrategyResult:
     """Whole workbook → Sonnet with --effort low."""
     prompt = _build_prompt(offer_id, info.workbook_text)
-    raw, elapsed = _call_claude(prompt, model="sonnet", timeout=300, effort="low")
+    raw, elapsed = _call_claude(prompt, model="sonnet", timeout=600, effort="low")
     parsed = _parse_json_response(raw)
     return StrategyResult(
         raw_json=parsed,
@@ -704,7 +705,7 @@ def run_sonnet_low(offer_id: int, info: WorkbookInfo) -> StrategyResult:
 def run_haiku_whole(offer_id: int, info: WorkbookInfo) -> StrategyResult:
     """Whole workbook → Haiku."""
     prompt = _build_prompt(offer_id, info.workbook_text)
-    raw, elapsed = _call_claude(prompt, model="haiku", timeout=300)
+    raw, elapsed = _call_claude(prompt, model="haiku", timeout=600)
     parsed = _parse_json_response(raw)
     return StrategyResult(
         raw_json=parsed,
@@ -727,7 +728,7 @@ def _run_per_tab(
     with ThreadPoolExecutor(max_workers=max(1, len(info.sheet_names))) as pool:
         for sn in info.sheet_names:
             prompt = _build_per_tab_prompt(offer_id, sn, info.sheets_text[sn])
-            fut = pool.submit(_call_claude, prompt, model, 120, effort)
+            fut = pool.submit(_call_claude, prompt, model, 240, effort)
             futures[fut] = sn
 
         results_by_sheet = {}
@@ -780,7 +781,7 @@ def _run_two_stage(
 
     # Stage 1: tab finder via Haiku
     finder_prompt = _build_tab_finder_prompt(offer_id, info.sheets_text)
-    raw_name, s1_time = _call_claude(finder_prompt, model="haiku", timeout=60)
+    raw_name, s1_time = _call_claude(finder_prompt, model="haiku", timeout=120)
     stage_times["stage1_find"] = s1_time
 
     if raw_name is None:
@@ -810,7 +811,7 @@ def _run_two_stage(
 
     # Stage 2: extract from matched sheet
     extract_prompt = _build_per_tab_prompt(offer_id, matched, info.sheets_text[matched])
-    raw, s2_time = _call_claude(extract_prompt, extract_model, 180, extract_effort)
+    raw, s2_time = _call_claude(extract_prompt, extract_model, 360, extract_effort)
     stage_times["stage2_extract"] = s2_time
 
     total = s1_time + s2_time
@@ -822,6 +823,7 @@ def _run_two_stage(
         error=None if parsed else "stage2_parse_failed" if raw else "stage2_call_failed",
         notes=f"tab={matched}, stage1={s1_time:.1f}s",
         stage_times=stage_times,
+        raw_response=raw if parsed is None else None,
     )
 
 
@@ -856,7 +858,7 @@ def _run_two_stage_smart(
     tab_corners = {sn: _extract_tab_corner(info.sheets_text[sn]) for sn in info.sheet_names}
     classifier_prompt = _build_smart_classifier_prompt(offer_id, tab_corners)
     raw_envelope, s1_time = _call_claude(
-        classifier_prompt, model="haiku", timeout=60, output_format="json"
+        classifier_prompt, model="haiku", timeout=120, output_format="json"
     )
     stage_times["stage1_classify"] = s1_time
 
@@ -927,7 +929,7 @@ def _run_two_stage_smart(
         offer_id, matched, info.sheets_text[matched], best
     )
     raw, s2_time = _call_claude(
-        extract_prompt, model=extract_model, timeout=180, effort=extract_effort
+        extract_prompt, model=extract_model, timeout=360, effort=extract_effort
     )
     stage_times["stage2_extract"] = s2_time
 
@@ -942,6 +944,7 @@ def _run_two_stage_smart(
         error=None if parsed else "stage2_parse_failed" if raw else "stage2_call_failed",
         notes=f"tab={matched}, orient={orientation}, conf={confidence}, stage1={s1_time:.1f}s",
         stage_times=stage_times,
+        raw_response=raw if parsed is None else None,
     )
 
 
@@ -990,6 +993,7 @@ def _load_cached(offer_id: int, strategy: str) -> StrategyResult | None:
             error=data.get("error"),
             notes=data.get("notes", ""),
             stage_times=data.get("stage_times", {}),
+            raw_response=data.get("raw_response"),
         )
     except (json.JSONDecodeError, AttributeError, TypeError):
         return None
@@ -998,6 +1002,7 @@ def _load_cached(offer_id: int, strategy: str) -> StrategyResult | None:
 def _save_cached(offer_id: int, strategy: str, result: StrategyResult):
     try:
         BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
+        raw_resp = result.raw_response
         data = {
             "offer_id": offer_id,
             "strategy": strategy,
@@ -1006,6 +1011,7 @@ def _save_cached(offer_id: int, strategy: str, result: StrategyResult):
             "error": result.error,
             "notes": result.notes,
             "stage_times": result.stage_times,
+            "raw_response": raw_resp[:2000] if raw_resp else None,
         }
         _cache_path(offer_id, strategy).write_text(json.dumps(data, indent=2))
     except Exception as e:

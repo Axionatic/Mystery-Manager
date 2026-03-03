@@ -33,8 +33,10 @@ python3 allocator/clean_history.py
 python3 allocator/clean_history.py --no-older    # historical/ only
 
 # LLM extraction for non-standard Tier C/D workbooks (run outside Claude Code):
-python3 allocator/clean_history.py --llm-extract
-python3 allocator/clean_history.py --llm-extract --force  # ignore cache
+python3 allocator/clean_history.py --llm-extract                                          # default: haiku-whole
+python3 allocator/clean_history.py --llm-extract --llm-method sonnet-low                  # specific method
+python3 allocator/clean_history.py --llm-extract --llm-method haiku-whole,sonnet-low      # multiple methods
+python3 allocator/clean_history.py --llm-extract --force                                  # ignore cache
 
 # Validate XLSX prices against DB:
 python3 validate_prices.py --offers 55,60,74,90
@@ -94,7 +96,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 - **`categorizer.py`** — assigns fungible groups and diversity classifications (sub-category, usage, colour, shape) by item name prefix matching.
 - **`tui.py`** — Rich interactive UI for reviewing/editing boxes before allocation.
 - **`llm_review.py`** — optional Claude CLI integration for note parsing and post-allocation review.
-- **`clean_history.py`** — multi-tier historical data processing. Handles 57 offers across Tiers A–C from `historical/` and `historical/older/`. Discovers files, selects sheets, detects transposed layouts, classifies columns via `box_parser.py`. Tier C uses `name_matcher.py` for LLM-based item matching. `--llm-extract` flag runs Sonnet-based extraction for non-standard Tier C/D workbooks (output to `cleaned_llm/`).
+- **`clean_history.py`** — multi-tier historical data processing. Handles 57 offers across Tiers A–C from `historical/` and `historical/older/`. Discovers files, selects sheets, detects transposed layouts, classifies columns via `box_parser.py`. Tier C uses `name_matcher.py` for LLM-based item matching. `--llm-extract` flag runs extraction for non-standard Tier C/D workbooks via selectable strategy (`--llm-method`, default `haiku-whole`); reuses `benchmark_extraction.STRATEGY_RUNNERS`. Output per method to `cleaned_llm/{method}/`; cache per (offer, method) at `mappings/offer_N_llm_extraction_{method}.json`, with fallback to `benchmark_results/offer_N_{method}.json`.
 - **`sheet_analyzer.py`** — LLM-based workbook analysis for non-standard historical offers. Sends full workbook content to Sonnet with a Tier A example, gets back structured per-box allocation data. Cached in `mappings/offer_N_llm_extraction.json`.
 - **`box_parser.py`** — parses box column headers across all historical naming conventions (`?Sm Name`, `(?) Lg Name`, `Size - Name`, `M Box N`, `Lge Charity`, etc.) into `(cleaned_name, size_tier, box_type)`.
 - **`name_matcher.py`** — LLM-based item name → DB ID matching for Tier C offers (no ID column). Exact/prefix match first, then Claude CLI (Haiku) for fuzzy matching. Cached in `mappings/`.
