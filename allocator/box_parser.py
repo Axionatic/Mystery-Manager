@@ -4,20 +4,21 @@ Box name parser for historical mystery box column headers.
 Handles the full variety of naming conventions across historical offers:
   - "?Md Name", "?Sm Name", "?Lg Name"
   - "(?) Lg Name", "(?) Md Name"
-  - "Sm Name", "Md Unsold #1", "Lg CCI"
+  - "Sm Name", "Md Unsold #1", "Lg Charity"
   - "Small - Name" (Size - Name pattern)
   - "M Box 1", "L Box 2" (single-letter size codes)
-  - "SM 1", "Med1", "Lge CCI", "Sml 2"
+  - "SM 1", "Med1", "Lge Charity", "Sml 2"
   - "Small1", "Small2", "Med 1"
   - "2nd Md", "4th Medium", "Sm 4Sale"
   - "Md+", "Sm+" (+ suffix as noise)
-  - "Box 26: Lge CCI", "Box 27: Md Name #1"
+  - "Box 26: Lge Charity", "Box 27: Md Name #1"
 """
 
 import re
 
 from allocator.config import (
     BOX_SIZE_OVERRIDES,
+    CHARITY_NAME,
     DONATION_IDENTIFIERS,
     STAFF_IDENTIFIERS,
     STANDALONE_NAME_TO_EMAIL,
@@ -112,7 +113,7 @@ def parse_box_name(header: str) -> tuple[str, str | None]:
         _, tier = parse_box_name(stripped)
         return (name, tier)
 
-    # Try size as prefix: "Sm Name", "Md Name", "Lg CCI", "Med1"
+    # Try size as prefix: "Sm Name", "Md Name", "Lg Charity", "Med1"
     m = _SIZE_PREFIX_RE.match(name)
     if m:
         size_word = m.group(1).lower()
@@ -189,8 +190,9 @@ def classify_box(header: str) -> tuple[str, str | None, str]:
         if form in STAFF_IDENTIFIERS:
             return (cleaned, None, "staff")
 
-    # Check common CCI patterns
-    if cleaned.upper() == "CCI" or "CCI" in cleaned.upper().split():
+    # Check charity name pattern (e.g. "Charity", "Lge Charity")
+    charity_upper = CHARITY_NAME.upper()
+    if cleaned.upper() == charity_upper or charity_upper in cleaned.upper().split():
         return (cleaned, size_tier, "donation")
 
     # Everything else is a standalone customer box

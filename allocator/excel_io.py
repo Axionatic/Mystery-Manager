@@ -80,7 +80,7 @@ def format_output(result: AllocationResult) -> str:
     - First row: ID\\tbox_name_1\\tbox_name_2\\t...
     - Subsequent rows: item_id\\tqty_1\\tqty_2\\t...
     - Merged boxes use email as column header
-    - Standalone boxes use name with ? prefix (e.g. "?Sm CCI")
+    - Standalone boxes use name with ? prefix (e.g. "?Sm Charity")
     """
     # Build column headers
     columns = []

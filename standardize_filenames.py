@@ -3,7 +3,7 @@
 Standardize historical XLSX filenames to canonical format.
 
 Renames files to `offer_{N}_shopping_list.xlsx`, stripping copy suffixes
-like "(1)", "(2)", "copy - 2", "cci check", etc.
+like "(1)", "(2)", "copy - 2", "charity check", etc.
 
 For multi-file offers (e.g. three offer_34 variants), prefers "Final" in name,
 then largest file size. Does NOT move files between directories.

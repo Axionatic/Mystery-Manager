@@ -138,4 +138,4 @@ If the hand-crafted function plateaus, consider learning the scoring function di
 1. **What's the right target score for manual boxes?** >= 85 is aspirational. Maybe 80 is more realistic if manual packing is genuinely suboptimal in some dimensions.
 2. **Should we weight recent offers more?** Packing quality/approach may have evolved over 30 weeks.
 3. **Do we need per-tier scoring parameters?** Small boxes have fewer items and less room for diversity — should their diversity penalty be softer?
-4. **How do we handle the charity/CCI allocation?** Currently excluded from scoring. Should it stay that way?
+4. **How do we handle the charity allocation?** Currently excluded from scoring. Should it stay that way?

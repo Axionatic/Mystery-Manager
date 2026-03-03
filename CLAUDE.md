@@ -32,6 +32,10 @@ python3 compare.py --all-strategies
 python3 allocator/clean_history.py
 python3 allocator/clean_history.py --no-older    # historical/ only
 
+# LLM extraction for non-standard Tier C/D workbooks (run outside Claude Code):
+python3 allocator/clean_history.py --llm-extract
+python3 allocator/clean_history.py --llm-extract --force  # ignore cache
+
 # Validate XLSX prices against DB:
 python3 validate_prices.py --offers 55,60,74,90
 
@@ -46,7 +50,7 @@ There are no tests. `compare.py` is the validation tool — it compares algorith
 
 Pluggable allocation framework with shared infrastructure and swappable strategies.
 
-**Data flow:** XLSX overage + DB items/buyers → `AllocationResult` → strategy fills boxes → CCI allocation → tab-delimited output
+**Data flow:** XLSX overage + DB items/buyers → `AllocationResult` → strategy fills boxes → charity allocation → tab-delimited output
 
 ### Pipeline (in `allocator/allocator.py`)
 
@@ -55,7 +59,7 @@ allocate()
   ├── shared: build_items, build_boxes, create AllocationResult
   ├── optional: apply bootstrap_allocations (pre-fill boxes from prior run)
   ├── STRATEGY(result)          ← pluggable (fills box.allocations in place)
-  ├── shared: _allocate_cci()
+  ├── shared: _allocate_charity()
   └── shared: remaining → stock
 ```
 
@@ -75,7 +79,7 @@ A strategy is a callable `(AllocationResult) -> None`. Strategies are registered
 
 **`greedy-best-fit`**, **`round-robin`**, **`minmax-deficit`** — Simpler additive strategies with varying heuristics. See their module docstrings for details.
 
-CCI allocation (remaining overage to charity toward computed target, then stock) is shared infrastructure, not part of any strategy.
+Charity allocation (remaining overage to charity toward computed target, then stock) is shared infrastructure, not part of any strategy.
 
 To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(result)` function, then register it in `_REGISTRY` in `allocator/strategies/__init__.py`. Select it with `--algorithm my-strat`.
 
@@ -90,8 +94,9 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 - **`categorizer.py`** — assigns fungible groups and diversity classifications (sub-category, usage, colour, shape) by item name prefix matching.
 - **`tui.py`** — Rich interactive UI for reviewing/editing boxes before allocation.
 - **`llm_review.py`** — optional Claude CLI integration for note parsing and post-allocation review.
-- **`clean_history.py`** — multi-tier historical data processing. Handles 57 offers across Tiers A–C from `historical/` and `historical/older/`. Discovers files, selects sheets, detects transposed layouts, classifies columns via `box_parser.py`. Tier C uses `name_matcher.py` for LLM-based item matching.
-- **`box_parser.py`** — parses box column headers across all historical naming conventions (`?Sm Name`, `(?) Lg Name`, `Size - Name`, `M Box N`, `Lge CCI`, etc.) into `(cleaned_name, size_tier, box_type)`.
+- **`clean_history.py`** — multi-tier historical data processing. Handles 57 offers across Tiers A–C from `historical/` and `historical/older/`. Discovers files, selects sheets, detects transposed layouts, classifies columns via `box_parser.py`. Tier C uses `name_matcher.py` for LLM-based item matching. `--llm-extract` flag runs Sonnet-based extraction for non-standard Tier C/D workbooks (output to `cleaned_llm/`).
+- **`sheet_analyzer.py`** — LLM-based workbook analysis for non-standard historical offers. Sends full workbook content to Sonnet with a Tier A example, gets back structured per-box allocation data. Cached in `mappings/offer_N_llm_extraction.json`.
+- **`box_parser.py`** — parses box column headers across all historical naming conventions (`?Sm Name`, `(?) Lg Name`, `Size - Name`, `M Box N`, `Lge Charity`, etc.) into `(cleaned_name, size_tier, box_type)`.
 - **`name_matcher.py`** — LLM-based item name → DB ID matching for Tier C offers (no ID column). Exact/prefix match first, then Claude CLI (Haiku) for fuzzy matching. Cached in `mappings/`.
 - **`claude_cli.py`** — subprocess wrapper for `claude -p` CLI calls.
 

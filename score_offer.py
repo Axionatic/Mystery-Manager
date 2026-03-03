@@ -125,7 +125,7 @@ def main():
               f"{m['fruit_pct']:>4.1f}% {m['diversity_score']:>5.2f} "
               f"{m['fungible_dupes']:>4} {m['bad_dupes']:>4} {m['pref_violations']:>4}")
 
-    # Stock and CCI summary for best strategy
+    # Stock and charity summary for best strategy
     stock_value = sum(
         best_result.items[iid].price * qty
         for iid, qty in best_result.stock.items()
