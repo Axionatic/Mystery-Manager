@@ -123,14 +123,20 @@ def match_items(
         {xlsx_name: {id, db_name, method, validated?}} for matched items.
         Unmatched items are omitted.
     """
-    db_parts = fetch_offer_parts_by_name(offer_id)
-    if not db_parts:
-        logger.info(f"Offer {offer_id}: no live offer_parts, retrying with soft-deleted records")
-        db_parts = fetch_offer_parts_by_name(offer_id, include_deleted=True)
-    db_names = list(db_parts.keys())
-
-    # Load existing cache
+    # Load existing cache first — if DB is unavailable, cached mappings suffice
     cache = {} if force else _load_cache(offer_id)
+
+    try:
+        db_parts = fetch_offer_parts_by_name(offer_id)
+        if not db_parts:
+            logger.info(f"Offer {offer_id}: no live offer_parts, retrying with soft-deleted records")
+            db_parts = fetch_offer_parts_by_name(offer_id, include_deleted=True)
+    except Exception:
+        if cache:
+            logger.info(f"Offer {offer_id}: DB unavailable, using cached name mappings ({len(cache)} items)")
+            return cache
+        raise
+    db_names = list(db_parts.keys())
 
     # Filter out non-F&V items and already-cached items
     to_match = []

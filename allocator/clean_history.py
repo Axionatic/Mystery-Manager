@@ -525,10 +525,9 @@ def _classify_headers(headers, use_extended: bool = False):
         elif col_type in ("merged", "standalone"):
             mystery_cols.append((i, str(h), col_type, size_tier))
         elif col_type in ("charity", "donation"):
-            # Both charity and donation go to charity_cols for CSV output
-            if col_type == "charity":
-                charity_cols.append((i, str(h)))
-            else:
+            # Donation boxes are charity recipients — include in charity CSV
+            charity_cols.append((i, str(h)))
+            if col_type == "donation":
                 donation_cols.append((i, str(h)))
 
     return classifications, id_col, item_col, mystery_cols, charity_cols, donation_cols
@@ -809,6 +808,10 @@ def _process_transposed(ws, header_row, offer_id, filepath, sheet_name,
             else:
                 donation_boxes.append(box_name)
 
+    # Donation boxes are charity recipients — include in charity CSV
+    if not charity_boxes and donation_boxes:
+        charity_boxes = donation_boxes
+
     if not mystery_boxes:
         logger.warning(f"Offer {offer_id}: no mystery boxes in transposed data")
         return None
@@ -1035,7 +1038,7 @@ def _process_with_llm(
     """
     # Lazy import — benchmark_extraction imports from clean_history at module level,
     # so we must defer this import to avoid a circular dependency.
-    import benchmark_extraction as _bx
+    from allocator import benchmark_extraction as _bx
     from allocator.name_matcher import match_items
 
     # 1. Check production cache: mappings/offer_N_llm_extraction_{method}.json
@@ -1184,7 +1187,7 @@ def run_llm_extraction(
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     # Lazy import to avoid circular dependency (benchmark_extraction imports clean_history)
-    import benchmark_extraction as _bx
+    from allocator import benchmark_extraction as _bx
     from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 
     if methods is None:
@@ -1194,8 +1197,12 @@ def run_llm_extraction(
 
     # Discover target files once
     files = discover_files(HISTORICAL_DIR, OLDER_DIR)
+    # Offer 28's Mystery Trello sheet uses text-encoded values readable by LLM
+    # even though openpyxl can't parse its formula-driven cells.
+    LLM_ALLOW = {28}
     targets = {
-        oid: files[oid] for oid in sorted(offer_ids) if oid in files and oid not in SKIP_OFFERS
+        oid: files[oid] for oid in sorted(offer_ids)
+        if oid in files and (oid not in SKIP_OFFERS or oid in LLM_ALLOW)
     }
 
     if not targets:
@@ -1416,7 +1423,7 @@ if __name__ == "__main__":
                 only_offers.add(int(part))
 
     if args.llm_extract:
-        import benchmark_extraction as _bx_validate
+        from allocator import benchmark_extraction as _bx_validate
         methods = [m.strip() for m in args.llm_method.split(",")]
         invalid = [m for m in methods if m not in _bx_validate.STRATEGY_RUNNERS]
         if invalid:
