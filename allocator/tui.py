@@ -277,12 +277,19 @@ def _run_leaderboard(
     xlsx_path: Path,
     charity_names: list[str] | None,
 ) -> None:
-    """Run all strategies and display a leaderboard table."""
+    """Run all strategies and display a leaderboard table with per-box detail."""
     from compare import (
         build_item_lookup,
         compute_available_tags,
         compute_box_metrics,
         compute_composite_score,
+    )
+    from allocator.config import (
+        VALUE_ACCEPT_HIGH,
+        VALUE_ACCEPT_LOW,
+        VALUE_HARD_HIGH,
+        VALUE_SWEET_HIGH,
+        VALUE_SWEET_LOW,
     )
 
     console.print(f"\n[bold]Running all strategies for offer {offer_id}...[/]")
@@ -295,10 +302,11 @@ def _run_leaderboard(
     item_lookup = build_item_lookup(offer_id)
     avail_tags = compute_available_tags(item_lookup)
 
-    # Score each strategy
+    # Score each strategy, saving box_details for the best
     scored = {}
     for strat, (result, elapsed) in strategy_results.items():
         metrics = []
+        box_details = []
         for box in result.boxes:
             m = compute_box_metrics(
                 box.name, box.allocations, item_lookup, box.tier,
@@ -306,10 +314,11 @@ def _run_leaderboard(
             )
             if m:
                 metrics.append(m)
+                box_details.append((box, m))
         comp = compute_composite_score(metrics)
-        scored[strat] = (comp, elapsed)
+        scored[strat] = (comp, metrics, box_details, result, elapsed)
 
-    # Build Rich table
+    # Leaderboard table
     ranked = sorted(scored.items(), key=lambda x: x[1][0]["score"], reverse=True)
 
     table = Table(title=f"Offer {offer_id} — Strategy Leaderboard", show_lines=False)
@@ -323,7 +332,7 @@ def _run_leaderboard(
     table.add_column("Pref", justify="right", width=8)
     table.add_column("Time", justify="right", style="dim", width=6)
 
-    for i, (name, (comp, elapsed)) in enumerate(ranked, 1):
+    for i, (name, (comp, _, _, _, elapsed)) in enumerate(ranked, 1):
         table.add_row(
             str(i),
             name,
@@ -338,6 +347,87 @@ def _run_leaderboard(
 
     console.print()
     console.print(table)
+
+    # Per-box detail for top strategy
+    best_name, (best_comp, best_metrics, best_details, best_result, _) = ranked[0]
+
+    detail_table = Table(
+        title=f"Best: {best_name} (score {best_comp['score']:.1f})",
+        show_lines=False,
+    )
+    detail_table.add_column("Box", style="cyan", max_width=30)
+    detail_table.add_column("Tier", style="magenta", width=7)
+    detail_table.add_column("Value", justify="right", width=8)
+    detail_table.add_column("Target", justify="right", width=8)
+    detail_table.add_column("%", justify="right", width=6)
+    detail_table.add_column("Items", justify="right", width=5)
+    detail_table.add_column("Fr%", justify="right", width=5)
+    detail_table.add_column("Diver", justify="right", width=5)
+    detail_table.add_column("FDup", justify="right", width=4)
+    detail_table.add_column("BDup", justify="right", width=4)
+    detail_table.add_column("Pref", justify="right", width=4)
+
+    for _box, m in best_details:
+        pct = m["value_pct"]
+        if VALUE_SWEET_LOW <= pct < VALUE_SWEET_HIGH:
+            pct_style = "green"
+        elif VALUE_ACCEPT_LOW <= pct < VALUE_ACCEPT_HIGH:
+            pct_style = "yellow"
+        else:
+            pct_style = "red"
+        detail_table.add_row(
+            m["box_name"][:30],
+            m["tier"],
+            f"${m['total_value']/100:.2f}",
+            f"${m['target_value']/100:.2f}",
+            Text(f"{pct:.1f}%", style=pct_style),
+            str(m["unique_items"]),
+            f"{m['fruit_pct']:.1f}%",
+            f"{m['diversity_score']:.2f}",
+            str(m["fungible_dupes"]),
+            str(m["bad_dupes"]),
+            str(m["pref_violations"]),
+        )
+
+    console.print(detail_table)
+
+    # Stock and charity summary
+    stock_value = sum(
+        best_result.items[iid].price * qty
+        for iid, qty in best_result.stock.items()
+        if iid in best_result.items
+    )
+    stock_items = sum(1 for q in best_result.stock.values() if q > 0)
+    console.print(f"  Stock: {stock_items} items, ${stock_value/100:.2f}")
+    for charity in best_result.charity:
+        cv = sum(
+            best_result.items[iid].price * qty
+            for iid, qty in charity.allocations.items()
+            if iid in best_result.items
+        )
+        ci = sum(1 for q in charity.allocations.values() if q > 0)
+        console.print(
+            f"  {charity.name}: {ci} items, ${cv/100:.2f} "
+            f"(target ${charity.target_value/100:.2f})"
+        )
+
+    # Value distribution
+    _ss = f"{VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}%"
+    buckets = [
+        (f"<{VALUE_ACCEPT_LOW}%", lambda v, lo=VALUE_ACCEPT_LOW: v < lo),
+        (f"{VALUE_ACCEPT_LOW}-{VALUE_SWEET_LOW}%", lambda v, lo=VALUE_ACCEPT_LOW, hi=VALUE_SWEET_LOW: lo <= v < hi),
+        (_ss, lambda v, lo=VALUE_SWEET_LOW, hi=VALUE_SWEET_HIGH: lo <= v < hi),
+        (f"{VALUE_SWEET_HIGH}-{VALUE_ACCEPT_HIGH}%", lambda v, lo=VALUE_SWEET_HIGH, hi=VALUE_ACCEPT_HIGH: lo <= v < hi),
+        (f"{VALUE_ACCEPT_HIGH}-{VALUE_HARD_HIGH}%", lambda v, lo=VALUE_ACCEPT_HIGH, hi=VALUE_HARD_HIGH: lo <= v < hi),
+        (f">={VALUE_HARD_HIGH}%", lambda v, hi=VALUE_HARD_HIGH: v >= hi),
+    ]
+    n_total = len(best_metrics)
+    console.print(f"\n  Value distribution ({n_total} boxes):")
+    for label, test in buckets:
+        count = sum(1 for m in best_metrics if test(m["value_pct"]))
+        marker = " \u2190 sweet spot" if label == _ss else ""
+        console.print(f"    {label:>10}: {count:>2} / {n_total}{marker}")
+
     console.print()
 
 
@@ -349,7 +439,7 @@ def _fill_workbook(
 ) -> None:
     """Run all strategies and fill the XLSX workbook with strategy tabs."""
     import openpyxl
-    from fill_workbook import copy_sheet, fill_strategy_sheet
+    from allocator.fill_workbook import copy_sheet, fill_strategy_sheet
 
     console.print(f"\n[bold]Running all strategies for offer {offer_id}...[/]")
     strategy_results = _run_all_strategies(boxes, offer_id, xlsx_path, charity_names)
