@@ -9,15 +9,15 @@ For multi-file offers (e.g. three offer_34 variants), prefers "Final" in name,
 then largest file size. Does NOT move files between directories.
 
 Usage:
-    python3 standardize_filenames.py          # dry-run (default)
-    python3 standardize_filenames.py --apply  # actually rename
+    python3 scripts/standardize_filenames.py          # dry-run (default)
+    python3 scripts/standardize_filenames.py --apply  # actually rename
 """
 
 import argparse
 import re
 from pathlib import Path
 
-HISTORICAL_DIR = Path(__file__).parent / "historical"
+HISTORICAL_DIR = Path(__file__).parent.parent / "historical"
 OLDER_DIR = HISTORICAL_DIR / "older"
 
 # Manual overrides for filenames that can't be auto-mapped

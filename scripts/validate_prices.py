@@ -9,9 +9,9 @@ For each offer with a Mystery Calc tab containing Price Ea / JS Price Ea:
   - Report matches, mismatches, and systematic patterns
 
 Usage:
-    python3 validate_prices.py                    # all offers
-    python3 validate_prices.py --offers 55,60,74  # specific offers
-    python3 validate_prices.py --json             # JSON report output
+    python3 scripts/validate_prices.py                    # all offers
+    python3 scripts/validate_prices.py --offers 55,60,74  # specific offers
+    python3 scripts/validate_prices.py --json             # JSON report output
 """
 
 import argparse
@@ -19,6 +19,8 @@ import json
 import logging
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 

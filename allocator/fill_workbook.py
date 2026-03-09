@@ -6,7 +6,7 @@ For each strategy, duplicates Sheet1 (the allocation template) and fills in
 the allocation quantities. Blank cells for 0.
 
 Usage:
-    python3 fill_workbook.py 106 historical/offer_106_shopping_list.xlsx
+    python3 allocator/fill_workbook.py 106 historical/offer_106_shopping_list.xlsx
 """
 
 import sys

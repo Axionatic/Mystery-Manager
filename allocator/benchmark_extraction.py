@@ -8,16 +8,16 @@ approach for extracting per-box allocation data.
 
 Usage:
     # Top N largest Tier C/D workbooks, all strategies:
-    python3 benchmark_extraction.py 5
+    python3 allocator/benchmark_extraction.py 5
 
     # Subset of strategies:
-    python3 benchmark_extraction.py 3 --strategies sonnet-low,haiku-whole
+    python3 allocator/benchmark_extraction.py 3 --strategies sonnet-low,haiku-whole
 
     # Specific offers:
-    python3 benchmark_extraction.py 0 --offers 32,40,52
+    python3 allocator/benchmark_extraction.py 0 --offers 32,40,52
 
     # Re-run ignoring cache:
-    python3 benchmark_extraction.py 5 --force
+    python3 allocator/benchmark_extraction.py 5 --force
 
 Must be run outside Claude Code (nested claude -p restriction).
 """
@@ -32,6 +32,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# When run as `python3 allocator/benchmark_extraction.py`, Python puts allocator/
+# on sys.path. Fix by ensuring the project root is on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
 
@@ -48,7 +52,7 @@ from allocator.sheet_analyzer import _TIER_A_EXAMPLE, _build_prompt
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-BENCHMARK_DIR = Path(__file__).parent / "benchmark_results"
+BENCHMARK_DIR = Path(__file__).parent.parent / "benchmark_results"
 
 ALL_STRATEGIES = [
     "sonnet-low",
@@ -355,7 +359,7 @@ Important rules:
 - Handle transposed layouts (items as columns, boxes as rows)
 - Charity/donation boxes ({CHARITY_NAME}, donation emails) go in charity_boxes
 - Cells marked [F] contain Excel formula results (e.g. price × quantity) — NOT hand-entered box allocations; skip any row/column where most allocation cells are [F] or non-integer decimals
-- Valid allocation quantities are non-negative integers or 0.5 (occasionally used for large fruit or per-kg items like potatoes); any other decimal means the row/column is pricing data, not allocations
+- Valid allocation quantities are non-negative integers or X.5 (occasionally used for large fruit or weighed items like salad and potatoes); any other decimal (X.1-4|X.6-9) means the row/column is pricing data, not allocations
 
 ## Sheet: {sheet_name}
 

@@ -3,13 +3,14 @@
 Run all strategies against a single offer and print a leaderboard.
 
 Usage:
-    python3 score_offer.py 106 historical/offer_106_shopping_list.xlsx
+    python3 scripts/score_offer.py 106 historical/offer_106_shopping_list.xlsx
 """
 
 import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import logging
 logging.getLogger("paramiko").setLevel(logging.WARNING)
@@ -17,11 +18,11 @@ logging.basicConfig(level=logging.WARNING)
 
 from allocator.allocator import allocate, build_boxes_from_db
 from allocator.config import (
-    VALUE_HEAVY_PENALTY_THRESHOLD,
-    VALUE_SWEET_SPOT_LOW,
-    VALUE_SWEET_SPOT_HIGH,
-    VALUE_OVER_SOFT_THRESHOLD,
-    VALUE_OVER_HARD_THRESHOLD,
+    VALUE_ACCEPT_HIGH,
+    VALUE_ACCEPT_LOW,
+    VALUE_HARD_HIGH,
+    VALUE_SWEET_HIGH,
+    VALUE_SWEET_LOW,
 )
 from allocator.strategies import list_strategies
 from compare import (
@@ -106,7 +107,7 @@ def main():
 
     print()
     print(f"  Score = 100 - penalties.  Higher is better.")
-    print(f"  Value: {VALUE_SWEET_SPOT_LOW}-{VALUE_SWEET_SPOT_HIGH}% sweet spot.  Dupes: weighted fungible overlap.")
+    print(f"  Value: {VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}% of price sweet spot.  Dupes: weighted fungible overlap.")
     print(f"  Diver: coverage of sub-cat/usage/colour/shape.  Fair: stddev of value%.")
 
     # Per-box detail for the top strategy
@@ -141,20 +142,20 @@ def main():
         print(f"  {charity.name}: {ci} items, ${cv/100:.2f} (target ${charity.target_value/100:.2f})")
 
     # Value distribution for best strategy
-    _ss = f"{VALUE_SWEET_SPOT_LOW}-{VALUE_SWEET_SPOT_HIGH}%"
+    _ss = f"{VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}%"
     buckets = [
-        (f"<{VALUE_HEAVY_PENALTY_THRESHOLD}%",
-         lambda v: v < VALUE_HEAVY_PENALTY_THRESHOLD),
-        (f"{VALUE_HEAVY_PENALTY_THRESHOLD}-{VALUE_SWEET_SPOT_LOW}%",
-         lambda v: VALUE_HEAVY_PENALTY_THRESHOLD <= v < VALUE_SWEET_SPOT_LOW),
+        (f"<{VALUE_ACCEPT_LOW}%",
+         lambda v: v < VALUE_ACCEPT_LOW),
+        (f"{VALUE_ACCEPT_LOW}-{VALUE_SWEET_LOW}%",
+         lambda v: VALUE_ACCEPT_LOW <= v < VALUE_SWEET_LOW),
         (_ss,
-         lambda v: VALUE_SWEET_SPOT_LOW <= v < VALUE_SWEET_SPOT_HIGH),
-        (f"{VALUE_SWEET_SPOT_HIGH}-{VALUE_OVER_SOFT_THRESHOLD}%",
-         lambda v: VALUE_SWEET_SPOT_HIGH <= v < VALUE_OVER_SOFT_THRESHOLD),
-        (f"{VALUE_OVER_SOFT_THRESHOLD}-{VALUE_OVER_HARD_THRESHOLD}%",
-         lambda v: VALUE_OVER_SOFT_THRESHOLD <= v < VALUE_OVER_HARD_THRESHOLD),
-        (f">={VALUE_OVER_HARD_THRESHOLD}%",
-         lambda v: v >= VALUE_OVER_HARD_THRESHOLD),
+         lambda v: VALUE_SWEET_LOW <= v < VALUE_SWEET_HIGH),
+        (f"{VALUE_SWEET_HIGH}-{VALUE_ACCEPT_HIGH}%",
+         lambda v: VALUE_SWEET_HIGH <= v < VALUE_ACCEPT_HIGH),
+        (f"{VALUE_ACCEPT_HIGH}-{VALUE_HARD_HIGH}%",
+         lambda v: VALUE_ACCEPT_HIGH <= v < VALUE_HARD_HIGH),
+        (f">={VALUE_HARD_HIGH}%",
+         lambda v: v >= VALUE_HARD_HIGH),
     ]
 
     n_total = len(best_metrics)
