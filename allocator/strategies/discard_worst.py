@@ -18,6 +18,7 @@ impossible) to remove.
 import logging
 
 from allocator.config import (
+    BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
     DUPE_PENALTY_FLOOR,
@@ -264,7 +265,7 @@ def _trim_to_ceiling(
     avail_counts: dict[str, int],
 ) -> None:
     """Remove items until box is at or below ceiling."""
-    ceiling = VALUE_CEILING_PCT * box.target_value
+    ceiling = VALUE_CEILING_PCT * BOX_TIERS[box.tier]["price"]
 
     while result.box_value(box) > ceiling:
         pen_before = box_penalty(box, result, available_tags)

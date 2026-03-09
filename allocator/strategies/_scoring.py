@@ -6,46 +6,48 @@ All constants are imported from config.py (single source of truth).
 """
 
 from allocator.config import (
+    BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DUPE_PENALTY_FLOOR,
     DUPE_PENALTY_MULTIPLIER,
     FAIRNESS_PENALTY_MULTIPLIER,
+    VALUE_ACCEPT_HIGH,
+    VALUE_ACCEPT_LOW,
     VALUE_FAR_PENALTY_RATE,
-    VALUE_HEAVY_PENALTY_THRESHOLD,
+    VALUE_HARD_HIGH,
     VALUE_NEAR_PENALTY_RATE,
-    VALUE_OVER_HARD_THRESHOLD,
+    VALUE_OVER_FAR_RATE,
     VALUE_OVER_MODERATE_RATE,
-    VALUE_OVER_SOFT_THRESHOLD,
-    VALUE_SWEET_SPOT_HIGH,
-    VALUE_SWEET_SPOT_LOW,
+    VALUE_SWEET_HIGH,
+    VALUE_SWEET_LOW,
 )
 from allocator.models import AllocationResult, MysteryBox
 from allocator.strategies._helpers import compute_diversity_score
 
 # Pre-computed base penalties (constant across all calls)
-_NEAR_BASE = (VALUE_SWEET_SPOT_LOW - VALUE_HEAVY_PENALTY_THRESHOLD) * VALUE_NEAR_PENALTY_RATE  # 6.0
-_OVER_SOFT_BASE = (VALUE_OVER_SOFT_THRESHOLD - VALUE_SWEET_SPOT_HIGH) * VALUE_NEAR_PENALTY_RATE  # 4.5
-_OVER_HARD_BASE = _OVER_SOFT_BASE + (VALUE_OVER_HARD_THRESHOLD - VALUE_OVER_SOFT_THRESHOLD) * VALUE_OVER_MODERATE_RATE  # 34.5
+_NEAR_BASE = (VALUE_SWEET_LOW - VALUE_ACCEPT_LOW) * VALUE_NEAR_PENALTY_RATE
+_OVER_SOFT_BASE = (VALUE_ACCEPT_HIGH - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
+_OVER_HARD_BASE = _OVER_SOFT_BASE + (VALUE_HARD_HIGH - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
 
 
 def value_penalty(vp: float) -> float:
     """
-    Piecewise-linear value penalty for a box at *vp* % of target.
+    Piecewise-linear value penalty for a box at *vp* % of box price.
 
-    Matches compare.py:423-443 exactly.
+    Mildly asymmetric: over-value penalties are softer than under-value,
+    since over-packing is a smaller sin than under-packing.
     """
-    if VALUE_SWEET_SPOT_LOW <= vp <= VALUE_SWEET_SPOT_HIGH:
+    if VALUE_SWEET_LOW <= vp <= VALUE_SWEET_HIGH:
         return 0.0
-    if VALUE_HEAVY_PENALTY_THRESHOLD <= vp < VALUE_SWEET_SPOT_LOW:
-        return (VALUE_SWEET_SPOT_LOW - vp) * VALUE_NEAR_PENALTY_RATE
-    if VALUE_SWEET_SPOT_HIGH < vp <= VALUE_OVER_SOFT_THRESHOLD:
-        return (vp - VALUE_SWEET_SPOT_HIGH) * VALUE_NEAR_PENALTY_RATE
-    if vp < VALUE_HEAVY_PENALTY_THRESHOLD:
-        return _NEAR_BASE + (VALUE_HEAVY_PENALTY_THRESHOLD - vp) * VALUE_FAR_PENALTY_RATE
-    if vp <= VALUE_OVER_HARD_THRESHOLD:
-        return _OVER_SOFT_BASE + (vp - VALUE_OVER_SOFT_THRESHOLD) * VALUE_OVER_MODERATE_RATE
-    # vp > 130
-    return _OVER_HARD_BASE + (vp - VALUE_OVER_HARD_THRESHOLD) * VALUE_FAR_PENALTY_RATE
+    if VALUE_ACCEPT_LOW <= vp < VALUE_SWEET_LOW:
+        return (VALUE_SWEET_LOW - vp) * VALUE_NEAR_PENALTY_RATE
+    if VALUE_SWEET_HIGH < vp <= VALUE_ACCEPT_HIGH:
+        return (vp - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
+    if vp < VALUE_ACCEPT_LOW:
+        return _NEAR_BASE + (VALUE_ACCEPT_LOW - vp) * VALUE_FAR_PENALTY_RATE
+    if vp <= VALUE_HARD_HIGH:
+        return _OVER_SOFT_BASE + (vp - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
+    return _OVER_HARD_BASE + (vp - VALUE_HARD_HIGH) * VALUE_OVER_FAR_RATE
 
 
 def weighted_dupe_penalty_for_box(box: MysteryBox, result: AllocationResult) -> float:
@@ -84,7 +86,8 @@ def box_penalty(
     This is the per-box contribution to the composite score (before fairness).
     """
     value = result.box_value(box)
-    vp = value / box.target_value * 100 if box.target_value > 0 else 0.0
+    box_price = BOX_TIERS[box.tier]["price"]
+    vp = value / box_price * 100 if box_price > 0 else 0.0
 
     val_pen = value_penalty(vp)
     dupe_pen = weighted_dupe_penalty_for_box(box, result) * DUPE_PENALTY_MULTIPLIER
@@ -110,7 +113,8 @@ def total_penalty(result: AllocationResult, available_tags: dict[str, set[str]])
     for box in result.boxes:
         box_pens.append(box_penalty(box, result, available_tags))
         value = result.box_value(box)
-        value_pcts.append(value / box.target_value * 100 if box.target_value > 0 else 0.0)
+        box_price = BOX_TIERS[box.tier]["price"]
+        value_pcts.append(value / box_price * 100 if box_price > 0 else 0.0)
 
     avg_pen = sum(box_pens) / n
 

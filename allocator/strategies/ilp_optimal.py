@@ -11,6 +11,7 @@ Falls back to deal-topup if PuLP is not installed or solver fails.
 import logging
 
 from allocator.config import (
+    BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
     DUPE_PENALTY_FLOOR,
@@ -19,7 +20,16 @@ from allocator.config import (
     ILP_BALANCE_WEIGHT,
     ILP_COVERAGE_WEIGHT,
     ILP_HHI_BREAKPOINTS,
+    VALUE_ACCEPT_HIGH,
+    VALUE_ACCEPT_LOW,
     VALUE_CEILING_PCT,
+    VALUE_FAR_PENALTY_RATE,
+    VALUE_HARD_HIGH,
+    VALUE_NEAR_PENALTY_RATE,
+    VALUE_OVER_FAR_RATE,
+    VALUE_OVER_MODERATE_RATE,
+    VALUE_SWEET_HIGH,
+    VALUE_SWEET_LOW,
 )
 from allocator.models import AllocationResult
 from allocator.strategies._helpers import compute_available_tags
@@ -28,16 +38,23 @@ logger = logging.getLogger(__name__)
 
 TIME_LIMIT = 30  # seconds
 
-# Piecewise-linear value penalty as affine lines: pen >= slope * vp + intercept
-# Slopes are non-decreasing → convex → epigraph formulation is exact.
-_VALUE_LINES = [
-    (-5.0,  556.0),    # far-below  (vp < 110)
-    (-1.5,  171.0),    # near-below (110 <= vp < 114)
-    ( 0.0,    0.0),    # sweet spot (114 <= vp <= 117)
-    ( 1.5, -175.5),    # near-above (117 < vp <= 120)
-    ( 3.0, -355.5),    # over-soft  (120 < vp <= 130)
-    ( 5.0, -615.5),    # over-hard  (vp > 130)
-]
+
+def _compute_value_lines():
+    """Derive piecewise-linear epigraph lines from config thresholds."""
+    near_base = (VALUE_SWEET_LOW - VALUE_ACCEPT_LOW) * VALUE_NEAR_PENALTY_RATE
+    over_soft_base = (VALUE_ACCEPT_HIGH - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
+    over_hard_base = over_soft_base + (VALUE_HARD_HIGH - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
+    return [
+        (-VALUE_FAR_PENALTY_RATE, VALUE_FAR_PENALTY_RATE * VALUE_ACCEPT_LOW + near_base),
+        (-VALUE_NEAR_PENALTY_RATE, VALUE_NEAR_PENALTY_RATE * VALUE_SWEET_LOW),
+        (0.0, 0.0),
+        (VALUE_NEAR_PENALTY_RATE, -VALUE_NEAR_PENALTY_RATE * VALUE_SWEET_HIGH),
+        (VALUE_OVER_MODERATE_RATE, -(VALUE_OVER_MODERATE_RATE * VALUE_ACCEPT_HIGH - over_soft_base)),
+        (VALUE_OVER_FAR_RATE, -(VALUE_OVER_FAR_RATE * VALUE_HARD_HIGH - over_hard_base)),
+    ]
+
+
+_VALUE_LINES = _compute_value_lines()
 
 # MAD-to-stddev scale factor: sqrt(pi/2) ≈ 1.2533
 _MAD_STDDEV_FACTOR = 1.2533
@@ -117,12 +134,12 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
             f"overage_{item.id}",
         )
 
-    # Ceiling: value in each box <= ceiling
+    # Ceiling: value in each box <= ceiling (% of box price)
     for b in range(n_boxes):
         box = boxes[b]
         prob += (
             pulp.lpSum(items[i].price * x[i][b] for i in range(n_items))
-            <= VALUE_CEILING_PCT * box.target_value,
+            <= VALUE_CEILING_PCT * BOX_TIERS[box.tier]["price"],
             f"ceiling_{b}",
         )
 
@@ -145,7 +162,7 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
     # -----------------------------------------------------------------------
     # 4a. Convex piecewise-linear value penalty
     # -----------------------------------------------------------------------
-    # vp[b] = value as % of target. Link: vp[b] * target_b == 100 * value_b
+    # vp[b] = value as % of box price. Link: vp[b] * price_b == 100 * value_b
     vp = {}
     pen_val = {}
     for b in range(n_boxes):
@@ -153,11 +170,11 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
         vp[b] = pulp.LpVariable(f"vp_{b}", lowBound=0)
         pen_val[b] = pulp.LpVariable(f"pen_val_{b}", lowBound=0)
 
-        # Link vp to allocations: vp[b] * target = 100 * sum(price * x)
-        # → target * vp[b] = 100 * value_b
+        # Link vp to allocations: vp[b] = value / box_price * 100
         value_expr = pulp.lpSum(items[i].price * x[i][b] for i in range(n_items))
+        box_price = BOX_TIERS[box.tier]["price"]
         prob += (
-            box.target_value * vp[b] == 100 * value_expr,
+            box_price * vp[b] == 100 * value_expr,
             f"vp_link_{b}",
         )
 

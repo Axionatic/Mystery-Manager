@@ -7,6 +7,7 @@ Two entry points:
 """
 
 from allocator.config import (
+    BOX_TIERS,
     DIVERSITY_WEIGHTS,
     FUNGIBLE_NEUTRAL_SCORE,
     FUNGIBLE_NEW_GROUP_BONUS,
@@ -87,7 +88,7 @@ def score_topup_candidate(
     target = box.target_value
 
     # Would exceed ceiling
-    if new_value > VALUE_CEILING_PCT * target:
+    if new_value > VALUE_CEILING_PCT * BOX_TIERS[box.tier]["price"]:
         return float("-inf")
 
     # --- new_item_bonus: strongly prefer items not yet in this box ---

@@ -43,16 +43,9 @@ from allocator.config import (
     PACK_PRICE_TOLERANCE_CENTS,
     PREF_VIOLATION_PENALTY,
     SLOT_DEGREE_THRESHOLD,
-    VALUE_FAR_PENALTY_RATE,
-    VALUE_HEAVY_PENALTY_THRESHOLD,
-    VALUE_NEAR_PENALTY_RATE,
-    VALUE_OVER_HARD_THRESHOLD,
-    VALUE_OVER_MODERATE_RATE,
-    VALUE_OVER_SOFT_THRESHOLD,
-    VALUE_SWEET_SPOT_HIGH,
-    VALUE_SWEET_SPOT_LOW,
     detect_pack_size,
 )
+from allocator.strategies._scoring import value_penalty
 from allocator.strategies import list_strategies
 from allocator.db import fetch_categories, fetch_mystery_box_buyers, fetch_offer_items
 
@@ -356,6 +349,7 @@ def compute_box_metrics(
         fungible_dupes, pref_violations
     Or None if no items could be resolved.
     """
+    price = BOX_TIERS.get(tier, BOX_TIERS["medium"])["price"]
     target = BOX_TIERS.get(tier, BOX_TIERS["medium"])["target_value"]
 
     total_value = 0
@@ -458,7 +452,7 @@ def compute_box_metrics(
         "tier": tier,
         "target_value": target,
         "total_value": total_value,
-        "value_pct": (total_value / target * 100) if target > 0 else 0.0,
+        "value_pct": (total_value / price * 100) if price > 0 else 0.0,
         "unique_items": unique_items,
         "fruit_value": fruit_value,
         "veg_value": veg_value,
@@ -486,26 +480,7 @@ def compute_composite_score(metrics: list[dict]) -> dict:
     n = len(metrics)
 
     # 1. Value penalty (per box, averaged)
-    value_penalties = []
-    near_base = (VALUE_SWEET_SPOT_LOW - VALUE_HEAVY_PENALTY_THRESHOLD) * VALUE_NEAR_PENALTY_RATE
-    over_soft_base = (VALUE_OVER_SOFT_THRESHOLD - VALUE_SWEET_SPOT_HIGH) * VALUE_NEAR_PENALTY_RATE
-    over_hard_base = over_soft_base + (VALUE_OVER_HARD_THRESHOLD - VALUE_OVER_SOFT_THRESHOLD) * VALUE_OVER_MODERATE_RATE
-    for m in metrics:
-        vp = m["value_pct"]
-        pen = 0.0
-        if VALUE_SWEET_SPOT_LOW <= vp <= VALUE_SWEET_SPOT_HIGH:
-            pen = 0.0  # sweet spot
-        elif VALUE_HEAVY_PENALTY_THRESHOLD <= vp < VALUE_SWEET_SPOT_LOW:
-            pen = (VALUE_SWEET_SPOT_LOW - vp) * VALUE_NEAR_PENALTY_RATE
-        elif VALUE_SWEET_SPOT_HIGH < vp <= VALUE_OVER_SOFT_THRESHOLD:
-            pen = (vp - VALUE_SWEET_SPOT_HIGH) * VALUE_NEAR_PENALTY_RATE
-        elif vp < VALUE_HEAVY_PENALTY_THRESHOLD:
-            pen = near_base + (VALUE_HEAVY_PENALTY_THRESHOLD - vp) * VALUE_FAR_PENALTY_RATE
-        elif VALUE_OVER_SOFT_THRESHOLD < vp <= VALUE_OVER_HARD_THRESHOLD:
-            pen = over_soft_base + (vp - VALUE_OVER_SOFT_THRESHOLD) * VALUE_OVER_MODERATE_RATE
-        elif vp > VALUE_OVER_HARD_THRESHOLD:
-            pen = over_hard_base + (vp - VALUE_OVER_HARD_THRESHOLD) * VALUE_FAR_PENALTY_RATE
-        value_penalties.append(pen)
+    value_penalties = [value_penalty(m["value_pct"]) for m in metrics]
     avg_value_pen = sum(value_penalties) / n
 
     # 2. Dupe penalty (per box, averaged) — weighted by fungibility degree
@@ -563,7 +538,11 @@ def _process_offer_quiet(
     if not box_names:
         return None
 
-    box_names = [bn for bn in box_names if bn not in DONATION_IDENTIFIERS]
+    from allocator.config import SKIP_COLUMN_IDENTIFIERS, STAFF_IDENTIFIERS
+    box_names = [bn for bn in box_names
+                 if bn not in DONATION_IDENTIFIERS
+                 and bn not in SKIP_COLUMN_IDENTIFIERS
+                 and bn not in STAFF_IDENTIFIERS]
 
     buyers_db = fetch_mystery_box_buyers(offer_id)
     buyer_prefs = {}
@@ -960,20 +939,7 @@ def print_detail(algorithm: str, per_offer: dict, all_algo: list[dict]):
     annotated = []
     for offer_id, (manual, algo) in per_offer.items():
         for m in algo:
-            vp = m["value_pct"]
-            pen = 0.0
-            if 114 <= vp <= 117:
-                pen = 0.0
-            elif 110 <= vp < 114:
-                pen = (114 - vp) * 1.5
-            elif 117 < vp <= 120:
-                pen = (vp - 117) * 1.5
-            elif vp < 110:
-                pen = (114 - 110) * 1.5 + (110 - vp) * 5.0
-            elif 120 < vp <= 130:
-                pen = (120 - 117) * 1.5 + (vp - 120) * 3.0
-            elif vp > 130:
-                pen = (120 - 117) * 1.5 + (130 - 120) * 3.0 + (vp - 130) * 5.0
+            pen = value_penalty(m["value_pct"])
             annotated.append((offer_id, m, pen))
 
     annotated.sort(key=lambda x: -x[2])
@@ -1142,7 +1108,7 @@ def main():
                 f"${(alg_avg['avg_value']-man_avg['avg_value'])/100:+.2f}",
             ),
             (
-                "Avg value % of target",
+                "Avg value % of price",
                 f"{man_avg['avg_value_pct']:.1f}%",
                 f"{alg_avg['avg_value_pct']:.1f}%",
                 f"{alg_avg['avg_value_pct']-man_avg['avg_value_pct']:+.1f}pp",
@@ -1214,7 +1180,7 @@ def main():
             ("Total boxes", f"{man_avg['count']}", na, ""),
             ("COMPOSITE SCORE", f"{man_comp['score']:.1f}", na, ""),
             ("Avg value ($)", f"${man_avg['avg_value']/100:.2f}", na, ""),
-            ("Avg value % of target", f"{man_avg['avg_value_pct']:.1f}%", na, ""),
+            ("Avg value % of price", f"{man_avg['avg_value_pct']:.1f}%", na, ""),
             ("Std dev of value %", f"{man_avg['std_value_pct']:.1f}", na, ""),
             ("% boxes >= target", f"{man_avg['pct_above_target']:.0f}%", na, ""),
             ("% boxes in 100-130% range", f"{man_avg['pct_within_15']:.0f}%", na, ""),
@@ -1264,7 +1230,7 @@ def main():
                     f"${(at['avg_value']-mt['avg_value'])/100:+.2f}",
                 ),
                 (
-                    "Avg value % of target",
+                    "Avg value % of price",
                     f"{mt['avg_value_pct']:.1f}%",
                     f"{at['avg_value_pct']:.1f}%",
                     f"{at['avg_value_pct']-mt['avg_value_pct']:+.1f}pp",
@@ -1292,13 +1258,13 @@ def main():
             tier_rows = [
                 ("Boxes", f"{mt['count']}", "n/a", ""),
                 ("Avg value ($)", f"${mt['avg_value']/100:.2f}", "n/a", ""),
-                ("Avg value % of target", f"{mt['avg_value_pct']:.1f}%", "n/a", ""),
+                ("Avg value % of price", f"{mt['avg_value_pct']:.1f}%", "n/a", ""),
             ]
         else:
             tier_rows = [
                 ("Boxes", "n/a", f"{at['count']}", ""),
                 ("Avg value ($)", "n/a", f"${at['avg_value']/100:.2f}", ""),
-                ("Avg value % of target", "n/a", f"{at['avg_value_pct']:.1f}%", ""),
+                ("Avg value % of price", "n/a", f"{at['avg_value_pct']:.1f}%", ""),
             ]
 
         for label, man_val, alg_val, diff in tier_rows:
@@ -1337,9 +1303,9 @@ def main():
     print(f"  INTERPRETATION GUIDE")
     print(f"{'='*70}")
     print(f"  Composite score:    100 = perfect, >80 = good, >60 = acceptable, <60 = poor")
-    print(f"  Value % of target:  114-117% = sweet spot (0 penalty)")
+    print(f"  Value % of price:   114-117% = sweet spot (0 penalty)")
     print(f"                      110-120% = acceptable (small penalty)")
-    print(f"                      <110% or >120% = heavy penalty")
+    print(f"                      <110% or >120% = heavier penalty (asymmetric: over-value softer)")
     print(f"  Diversity score:    1.0 = covers all available sub-cats, usages, colours, shapes")
     print(f"                      0.0 = no coverage; penalty = (1 - score) * 8.0")
     print(f"  Fungible dupes:     FDup = all dupes, BDup = bad dupes only (<0.7 degree)")

@@ -5,7 +5,7 @@ Common constraint checks, mutation helpers, and box analysis utilities
 used across multiple strategies.
 """
 
-from allocator.config import DIVERSITY_WEIGHTS, VALUE_CEILING_PCT
+from allocator.config import BOX_TIERS, DIVERSITY_WEIGHTS, VALUE_CEILING_PCT
 from allocator.models import AllocationResult, Item, MysteryBox
 
 
@@ -15,7 +15,7 @@ def would_exceed_ceiling(
     """Check if adding qty of item would push box value above the ceiling."""
     current = result.box_value(box)
     new_value = current + item.price * qty
-    return new_value > VALUE_CEILING_PCT * box.target_value
+    return new_value > VALUE_CEILING_PCT * BOX_TIERS[box.tier]["price"]
 
 
 def box_fungible_groups(box: MysteryBox, result: AllocationResult) -> set[str]:

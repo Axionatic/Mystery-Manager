@@ -16,6 +16,7 @@ import logging
 import math
 
 from allocator.config import (
+    BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
     DUPE_PENALTY_FLOOR,
@@ -71,12 +72,13 @@ class _ObjectiveCache:
         items = self.result.items
         state = self.states[box_idx]
 
-        # Value as % of target
+        # Value as % of box price
         value = 0
         for item_id, qty in box.allocations.items():
             if item_id in items:
                 value += items[item_id].price * qty
-        state.value_pct = value / box.target_value * 100 if box.target_value > 0 else 0.0
+        box_price = BOX_TIERS[box.tier]["price"]
+        state.value_pct = value / box_price * 100 if box_price > 0 else 0.0
 
         # Diversity score using effective species (1/HHI), inlined for speed
         tag_counts: dict[str, dict[str, int]] = {
