@@ -285,19 +285,10 @@ ITEM_CLASSIFICATIONS = {
 # Composite scoring (compare.py)
 # ---------------------------------------------------------------------------
 
-# Value penalty: thresholds as % of box price (parsed from BOX_VALUE_THRESHOLDS env)
-_thresholds = [int(x) for x in os.environ.get("BOX_VALUE_THRESHOLDS", "110,114,117,120,130").split(",")]
-VALUE_ACCEPT_LOW = _thresholds[0]        # heavy penalty below this
-VALUE_SWEET_LOW = _thresholds[1]         # sweet spot lower bound
-VALUE_SWEET_HIGH = _thresholds[2]        # sweet spot upper bound
-VALUE_ACCEPT_HIGH = _thresholds[3]       # moderate over-value above this
-VALUE_HARD_HIGH = _thresholds[4]         # hard over-value above this
-
-# Value penalty: rates per percentage point
-VALUE_NEAR_PENALTY_RATE = 1.5        # within sweet spot buffer zones
-VALUE_FAR_PENALTY_RATE = 5.0         # below accept-low
-VALUE_OVER_MODERATE_RATE = 1.5       # accept-high to hard-high (softer than under-value)
-VALUE_OVER_FAR_RATE = 3.0            # above hard-high (asymmetric: softer than under-value)
+# Value penalty: power function parameters (env-overridable)
+VALUE_SWEET_FROM = int(os.environ.get("VALUE_SWEET_FROM", "114"))
+VALUE_SWEET_TO = int(os.environ.get("VALUE_SWEET_TO", "117"))
+VALUE_PENALTY_EXPONENT = float(os.environ.get("VALUE_PENALTY_EXPONENT", "1.25"))
 
 # Aggregate penalty multipliers
 DUPE_PENALTY_MULTIPLIER = 8.0       # weighted_dupe_penalty * this

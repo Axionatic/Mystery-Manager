@@ -18,11 +18,8 @@ logging.basicConfig(level=logging.WARNING)
 
 from allocator.allocator import allocate, build_boxes_from_db
 from allocator.config import (
-    VALUE_ACCEPT_HIGH,
-    VALUE_ACCEPT_LOW,
-    VALUE_HARD_HIGH,
-    VALUE_SWEET_HIGH,
-    VALUE_SWEET_LOW,
+    VALUE_SWEET_FROM,
+    VALUE_SWEET_TO,
 )
 from allocator.strategies import list_strategies
 from compare import (
@@ -107,7 +104,7 @@ def main():
 
     print()
     print(f"  Score = 100 - penalties.  Higher is better.")
-    print(f"  Value: {VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}% of price sweet spot.  Dupes: weighted fungible overlap.")
+    print(f"  Value: {VALUE_SWEET_FROM}-{VALUE_SWEET_TO}% of price sweet spot.  Dupes: weighted fungible overlap.")
     print(f"  Diver: coverage of sub-cat/usage/colour/shape.  Fair: stddev of value%.")
 
     # Per-box detail for the top strategy
@@ -142,20 +139,17 @@ def main():
         print(f"  {charity.name}: {ci} items, ${cv/100:.2f} (target ${charity.target_value/100:.2f})")
 
     # Value distribution for best strategy
-    _ss = f"{VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}%"
+    sf, st = VALUE_SWEET_FROM, VALUE_SWEET_TO
+    _ss = f"{sf}-{st}%"
     buckets = [
-        (f"<{VALUE_ACCEPT_LOW}%",
-         lambda v: v < VALUE_ACCEPT_LOW),
-        (f"{VALUE_ACCEPT_LOW}-{VALUE_SWEET_LOW}%",
-         lambda v: VALUE_ACCEPT_LOW <= v < VALUE_SWEET_LOW),
+        (f"<{sf}%",
+         lambda v, lo=sf: v < lo),
         (_ss,
-         lambda v: VALUE_SWEET_LOW <= v < VALUE_SWEET_HIGH),
-        (f"{VALUE_SWEET_HIGH}-{VALUE_ACCEPT_HIGH}%",
-         lambda v: VALUE_SWEET_HIGH <= v < VALUE_ACCEPT_HIGH),
-        (f"{VALUE_ACCEPT_HIGH}-{VALUE_HARD_HIGH}%",
-         lambda v: VALUE_ACCEPT_HIGH <= v < VALUE_HARD_HIGH),
-        (f">={VALUE_HARD_HIGH}%",
-         lambda v: v >= VALUE_HARD_HIGH),
+         lambda v, lo=sf, hi=st: lo <= v < hi),
+        (f"{st}-130%",
+         lambda v, lo=st: lo <= v < 130),
+        (">=130%",
+         lambda v: v >= 130),
     ]
 
     n_total = len(best_metrics)

@@ -285,11 +285,8 @@ def _run_leaderboard(
         compute_composite_score,
     )
     from allocator.config import (
-        VALUE_ACCEPT_HIGH,
-        VALUE_ACCEPT_LOW,
-        VALUE_HARD_HIGH,
-        VALUE_SWEET_HIGH,
-        VALUE_SWEET_LOW,
+        VALUE_SWEET_FROM,
+        VALUE_SWEET_TO,
     )
 
     console.print(f"\n[bold]Running all strategies for offer {offer_id}...[/]")
@@ -369,9 +366,9 @@ def _run_leaderboard(
 
     for _box, m in best_details:
         pct = m["value_pct"]
-        if VALUE_SWEET_LOW <= pct < VALUE_SWEET_HIGH:
+        if VALUE_SWEET_FROM <= pct <= VALUE_SWEET_TO:
             pct_style = "green"
-        elif VALUE_ACCEPT_LOW <= pct < VALUE_ACCEPT_HIGH:
+        elif abs(pct - (VALUE_SWEET_FROM + VALUE_SWEET_TO) / 2) <= 10:
             pct_style = "yellow"
         else:
             pct_style = "red"
@@ -412,14 +409,13 @@ def _run_leaderboard(
         )
 
     # Value distribution
-    _ss = f"{VALUE_SWEET_LOW}-{VALUE_SWEET_HIGH}%"
+    sf, st = VALUE_SWEET_FROM, VALUE_SWEET_TO
+    _ss = f"{sf}-{st}%"
     buckets = [
-        (f"<{VALUE_ACCEPT_LOW}%", lambda v, lo=VALUE_ACCEPT_LOW: v < lo),
-        (f"{VALUE_ACCEPT_LOW}-{VALUE_SWEET_LOW}%", lambda v, lo=VALUE_ACCEPT_LOW, hi=VALUE_SWEET_LOW: lo <= v < hi),
-        (_ss, lambda v, lo=VALUE_SWEET_LOW, hi=VALUE_SWEET_HIGH: lo <= v < hi),
-        (f"{VALUE_SWEET_HIGH}-{VALUE_ACCEPT_HIGH}%", lambda v, lo=VALUE_SWEET_HIGH, hi=VALUE_ACCEPT_HIGH: lo <= v < hi),
-        (f"{VALUE_ACCEPT_HIGH}-{VALUE_HARD_HIGH}%", lambda v, lo=VALUE_ACCEPT_HIGH, hi=VALUE_HARD_HIGH: lo <= v < hi),
-        (f">={VALUE_HARD_HIGH}%", lambda v, hi=VALUE_HARD_HIGH: v >= hi),
+        (f"<{sf}%", lambda v, lo=sf: v < lo),
+        (_ss, lambda v, lo=sf, hi=st: lo <= v < hi),
+        (f"{st}-130%", lambda v, lo=st: lo <= v < 130),
+        (">=130%", lambda v: v >= 130),
     ]
     n_total = len(best_metrics)
     console.print(f"\n  Value distribution ({n_total} boxes):")

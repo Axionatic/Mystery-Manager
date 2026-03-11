@@ -20,16 +20,10 @@ from allocator.config import (
     ILP_BALANCE_WEIGHT,
     ILP_COVERAGE_WEIGHT,
     ILP_HHI_BREAKPOINTS,
-    VALUE_ACCEPT_HIGH,
-    VALUE_ACCEPT_LOW,
     VALUE_CEILING_PCT,
-    VALUE_FAR_PENALTY_RATE,
-    VALUE_HARD_HIGH,
-    VALUE_NEAR_PENALTY_RATE,
-    VALUE_OVER_FAR_RATE,
-    VALUE_OVER_MODERATE_RATE,
-    VALUE_SWEET_HIGH,
-    VALUE_SWEET_LOW,
+    VALUE_PENALTY_EXPONENT,
+    VALUE_SWEET_FROM,
+    VALUE_SWEET_TO,
 )
 from allocator.models import AllocationResult
 from allocator.strategies._helpers import compute_available_tags
@@ -40,18 +34,49 @@ TIME_LIMIT = 30  # seconds
 
 
 def _compute_value_lines():
-    """Derive piecewise-linear epigraph lines from config thresholds."""
-    near_base = (VALUE_SWEET_LOW - VALUE_ACCEPT_LOW) * VALUE_NEAR_PENALTY_RATE
-    over_soft_base = (VALUE_ACCEPT_HIGH - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
-    over_hard_base = over_soft_base + (VALUE_HARD_HIGH - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
-    return [
-        (-VALUE_FAR_PENALTY_RATE, VALUE_FAR_PENALTY_RATE * VALUE_ACCEPT_LOW + near_base),
-        (-VALUE_NEAR_PENALTY_RATE, VALUE_NEAR_PENALTY_RATE * VALUE_SWEET_LOW),
-        (0.0, 0.0),
-        (VALUE_NEAR_PENALTY_RATE, -VALUE_NEAR_PENALTY_RATE * VALUE_SWEET_HIGH),
-        (VALUE_OVER_MODERATE_RATE, -(VALUE_OVER_MODERATE_RATE * VALUE_ACCEPT_HIGH - over_soft_base)),
-        (VALUE_OVER_FAR_RATE, -(VALUE_OVER_FAR_RATE * VALUE_HARD_HIGH - over_hard_base)),
-    ]
+    """
+    Generate piecewise-linear tangent-line approximation of x^n.
+
+    For convex f(x) = x^n (n > 1), tangent at point x_i:
+      slope = n * x_i^(n-1)
+      intercept = x_i^n - slope * x_i
+    Epigraph constraint: pen >= slope * x + intercept
+
+    Returns list of (slope, intercept) pairs for the full vp domain:
+    - Under sweet spot: penalty = (SWEET_FROM - vp)^n
+    - Over sweet spot:  penalty = (vp - SWEET_TO)^n
+    """
+    n = VALUE_PENALTY_EXPONENT
+    # Tangent points spanning expected distance range (0-40pp from sweet spot)
+    tangent_points = [0.5, 2, 5, 10, 15, 20, 30, 40]
+
+    lines = []
+    # Zero line (penalty = 0 inside sweet spot, also valid lower bound elsewhere)
+    lines.append((0.0, 0.0))
+
+    for xi in tangent_points:
+        # f(xi) = xi^n, f'(xi) = n * xi^(n-1)
+        f_xi = xi ** n
+        df_xi = n * xi ** (n - 1)
+
+        # Under side: penalty = (SWEET_FROM - vp)^n
+        # Let u = SWEET_FROM - vp, then pen >= df_xi * u + (f_xi - df_xi * xi)
+        # Substituting u = SWEET_FROM - vp:
+        #   pen >= df_xi * (SWEET_FROM - vp) + (f_xi - df_xi * xi)
+        #   pen >= -df_xi * vp + (df_xi * SWEET_FROM + f_xi - df_xi * xi)
+        under_slope = -df_xi
+        under_intercept = df_xi * VALUE_SWEET_FROM + f_xi - df_xi * xi
+        lines.append((under_slope, under_intercept))
+
+        # Over side: penalty = (vp - SWEET_TO)^n
+        # Let u = vp - SWEET_TO, then pen >= df_xi * u + (f_xi - df_xi * xi)
+        # Substituting u = vp - SWEET_TO:
+        #   pen >= df_xi * vp + (-df_xi * SWEET_TO + f_xi - df_xi * xi)
+        over_slope = df_xi
+        over_intercept = -df_xi * VALUE_SWEET_TO + f_xi - df_xi * xi
+        lines.append((over_slope, over_intercept))
+
+    return lines
 
 
 _VALUE_LINES = _compute_value_lines()

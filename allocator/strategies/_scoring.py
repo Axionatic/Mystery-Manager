@@ -11,43 +11,28 @@ from allocator.config import (
     DUPE_PENALTY_FLOOR,
     DUPE_PENALTY_MULTIPLIER,
     FAIRNESS_PENALTY_MULTIPLIER,
-    VALUE_ACCEPT_HIGH,
-    VALUE_ACCEPT_LOW,
-    VALUE_FAR_PENALTY_RATE,
-    VALUE_HARD_HIGH,
-    VALUE_NEAR_PENALTY_RATE,
-    VALUE_OVER_FAR_RATE,
-    VALUE_OVER_MODERATE_RATE,
-    VALUE_SWEET_HIGH,
-    VALUE_SWEET_LOW,
+    VALUE_PENALTY_EXPONENT,
+    VALUE_SWEET_FROM,
+    VALUE_SWEET_TO,
 )
 from allocator.models import AllocationResult, MysteryBox
 from allocator.strategies._helpers import compute_diversity_score
 
-# Pre-computed base penalties (constant across all calls)
-_NEAR_BASE = (VALUE_SWEET_LOW - VALUE_ACCEPT_LOW) * VALUE_NEAR_PENALTY_RATE
-_OVER_SOFT_BASE = (VALUE_ACCEPT_HIGH - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
-_OVER_HARD_BASE = _OVER_SOFT_BASE + (VALUE_HARD_HIGH - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
-
 
 def value_penalty(vp: float) -> float:
     """
-    Piecewise-linear value penalty for a box at *vp* % of box price.
+    Power-function value penalty for a box at *vp* % of box price.
 
-    Mildly asymmetric: over-value penalties are softer than under-value,
-    since over-packing is a smaller sin than under-packing.
+    Symmetric: penalty = distance_from_sweet_spot ** exponent.
+    Small deviations are gentle, large deviations are harsh.
     """
-    if VALUE_SWEET_LOW <= vp <= VALUE_SWEET_HIGH:
+    if VALUE_SWEET_FROM <= vp <= VALUE_SWEET_TO:
         return 0.0
-    if VALUE_ACCEPT_LOW <= vp < VALUE_SWEET_LOW:
-        return (VALUE_SWEET_LOW - vp) * VALUE_NEAR_PENALTY_RATE
-    if VALUE_SWEET_HIGH < vp <= VALUE_ACCEPT_HIGH:
-        return (vp - VALUE_SWEET_HIGH) * VALUE_NEAR_PENALTY_RATE
-    if vp < VALUE_ACCEPT_LOW:
-        return _NEAR_BASE + (VALUE_ACCEPT_LOW - vp) * VALUE_FAR_PENALTY_RATE
-    if vp <= VALUE_HARD_HIGH:
-        return _OVER_SOFT_BASE + (vp - VALUE_ACCEPT_HIGH) * VALUE_OVER_MODERATE_RATE
-    return _OVER_HARD_BASE + (vp - VALUE_HARD_HIGH) * VALUE_OVER_FAR_RATE
+    if vp < VALUE_SWEET_FROM:
+        x = VALUE_SWEET_FROM - vp
+    else:
+        x = vp - VALUE_SWEET_TO
+    return x ** VALUE_PENALTY_EXPONENT
 
 
 def weighted_dupe_penalty_for_box(box: MysteryBox, result: AllocationResult) -> float:
