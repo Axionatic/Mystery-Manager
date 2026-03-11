@@ -41,6 +41,8 @@ python3 scripts/validate_prices.py --offers 55,60,74,90           # XLSX vs DB p
 python3 scripts/standardize_filenames.py                          # dry-run filename normalization
 python3 scripts/standardize_filenames.py --apply                  # apply renames
 python3 scripts/compare_llm_outputs.py                            # side-by-side LLM extraction comparison
+python3 scripts/analyze_offer_values.py                           # per-offer value targets by size tier
+python3 scripts/analyze_offer_values.py --only-offers 64-106      # Tier A only
 ```
 
 There are no tests. `compare.py` is the validation tool — it compares algorithm output against cleaned historical CSVs and prints per-box and aggregate metrics with a composite score. Default run uses Tier A offers only; use `--only-offers` for others.
@@ -86,9 +88,9 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 - **`strategies/`** — pluggable allocation strategies. `__init__.py` has the registry; `deal_topup.py` is the default strategy. `_scoring.py` provides shared penalty functions (`value_penalty`, `box_penalty`, `total_penalty`) matching compare.py's composite scoring exactly, so strategies optimise the same objective they're measured on. `_helpers.py` has shared constraint checks and diversity scoring.
 - **`models.py`** — `Item`, `MysteryBox`, `CharityBox`, `AllocationResult`, `ExclusionRule`. All prices in cents.
-- **`config.py`** — tier definitions, scoring weights, fungible groups, item classifications (`ITEM_CLASSIFICATIONS`), diversity dimension weights (`DIVERSITY_WEIGHTS`), composite scoring constants (penalty rates/multipliers), identifier sets (`DONATION_IDENTIFIERS`, `STAFF_IDENTIFIERS`, `SKIP_COLUMN_IDENTIFIERS`, `STANDALONE_NAME_TO_EMAIL`).
+- **`config.py`** — tier definitions, scoring weights, fungible groups, item classifications (`ITEM_CLASSIFICATIONS`), diversity dimension weights (`DIVERSITY_WEIGHTS`), composite scoring constants (`VALUE_SWEET_FROM`, `VALUE_SWEET_TO`, `VALUE_PENALTY_EXPONENT`, penalty multipliers), identifier sets (`DONATION_IDENTIFIERS`, `STAFF_IDENTIFIERS`, `SKIP_COLUMN_IDENTIFIERS`, `STANDALONE_NAME_TO_EMAIL`).
 - **`scorer.py`** — deal-topup specific scoring. `prioritize_items_for_deal()` sorts items for deal phase; `score_topup_candidate()` scores top-up additions with hard constraints and soft scoring. (Strategy-level composite scoring lives in `strategies/_scoring.py`.)
-- **`db.py`** — SSH tunnel (via paramiko) to Laravel MySQL DB. Singleton `TunnelManager` with reference counting. All query functions are `@functools.cache`-decorated for within-run deduplication. `fetch_offer_parts_by_name()` for name-based matching.
+- **`db.py`** — SSH tunnel (via paramiko) to Laravel MySQL DB. Singleton `TunnelManager` with reference counting. Supports `DB_SOCKET` env var for Unix socket connections (overrides host/port). All query functions are `@functools.cache`-decorated for within-run deduplication. `fetch_offer_parts_by_name()` for name-based matching.
 - **`excel_io.py`** — reads `ID` + `Overage` columns from XLSX; writes tab-delimited output matching `parseMysteryBoxInput()` format.
 - **`categorizer.py`** — assigns fungible groups and diversity classifications (sub-category, usage, colour, shape) by item name prefix matching.
 - **`tui.py`** — Rich interactive UI for reviewing/editing boxes before allocation.
@@ -109,6 +111,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 - **`validate_prices.py`** — SUMPRODUCT validation comparing XLSX prices against DB `offer_parts.price`.
 - **`standardize_filenames.py`** — renames historical XLSX files to canonical `offer_{N}_shopping_list.xlsx` format.
 - **`compare_llm_outputs.py`** — side-by-side comparison of LLM extraction methods with Jaccard similarity and optional Claude investigation.
+- **`analyze_offer_values.py`** — per-offer, per-size-tier average box values. Writes `diagnostics/offer_value_targets.json` for Phase 3 training data.
 
 ## Database gotchas
 
@@ -127,21 +130,21 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 ## Strategy Leaderboard
 
-Composite scores across 42 Tier A offers (2026-03-06). Update when algorithms change by running `python3 compare.py --all-strategies`.
+Composite scores across 42 Tier A offers (2026-03-11). Update when algorithms change by running `python3 compare.py --all-strategies`.
 
 ```
 Rank  Strategy            Score   Value  Dupes  Diver   Fair   Pref
-1.    ilp-optimal          95.3    -0.3   -0.0   -3.7   -0.7   -0.0
-2.    local-search         87.2    -3.3   -2.4   -5.6   -1.5   -0.0
-3.    round-robin          87.0    -3.5   -2.0   -5.8   -1.7   -0.0
-4.    discard-worst        84.3    -4.3   -3.4   -5.6   -2.4   -0.0
-5.    deal-topup           82.5    -8.5   -0.4   -5.5   -3.0   -0.0
-6.    minmax-deficit       73.7   -18.8   -2.6   -4.7   -0.2   -0.0
-7.    greedy-best-fit      73.6   -18.7   -3.6   -3.9   -0.2   -0.0
-8.    manual               65.2   -19.7   -3.9   -4.8   -6.5   -0.0
+1.    ilp-optimal          95.3    -0.2   -0.0   -3.8   -0.7   -0.0
+2.    local-search         88.7    -2.0   -2.3   -5.6   -1.5   -0.0
+3.    round-robin          86.9    -3.6   -2.0   -5.8   -1.7   -0.0
+4.    discard-worst        86.4    -2.2   -3.4   -5.6   -2.4   -0.0
+5.    deal-topup           81.8    -9.2   -0.4   -5.5   -3.0   -0.0
+6.    minmax-deficit       68.9   -23.5   -2.6   -4.7   -0.2   -0.0
+7.    greedy-best-fit      68.8   -23.5   -3.6   -3.9   -0.2   -0.0
+8.    manual               65.7   -19.3   -3.9   -4.8   -6.3   -0.0
 ```
 
-Score = 100 minus penalties. Value thresholds are % of box **price** (not target): 114-117% sweet spot (0 penalty), 110-120% acceptable (small penalty), <110% heavy under-value penalty, >120% softer over-value penalty (asymmetric). Dupes: weighted by `max(degree - DUPE_PENALTY_FLOOR, 0)` (see `config.py`). Diver(sity): coverage of sub-categories, usages, colours, shapes across available items; penalty = (1 - score) * 10.0. Fair: std dev of value%. Pref: preference violations.
+Score = 100 minus penalties. Value penalty uses a symmetric power function: `penalty = distance^1.25` where distance is pp from the 114-117% sweet spot (configurable via `VALUE_SWEET_FROM`, `VALUE_SWEET_TO`, `VALUE_PENALTY_EXPONENT`). Dupes: weighted by `max(degree - DUPE_PENALTY_FLOOR, 0)` (see `config.py`). Diver(sity): coverage of sub-categories, usages, colours, shapes across available items; penalty = (1 - score) * 10.0. Fair: std dev of value%. Pref: preference violations.
 
 ## Historical data tiers
 
