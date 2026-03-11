@@ -27,6 +27,7 @@ logging.getLogger("paramiko").setLevel(logging.WARNING)
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
 from allocator.allocator import allocate, build_boxes_from_db
+from allocator.box_parser import infer_box_tier
 from allocator.categorizer import assign_classification, assign_fungible_group
 from allocator.config import (
     BOX_TIERS,
@@ -57,6 +58,28 @@ OLDER_DIR = HISTORICAL_DIR / "older"
 _LEGACY_OFFER_IDS = list(range(75, 87)) + list(range(88, 105))  # 75-86, 88-104 (no 87)
 
 
+def _discover_cleaned_offer_ids() -> set[int]:
+    """Scan cleaned/ for offer_*_mystery.csv and return available offer IDs."""
+    ids = set()
+    for f in CLEANED_DIR.glob("offer_*_mystery.csv"):
+        try:
+            ids.add(int(f.stem.split("_")[1]))
+        except (ValueError, IndexError):
+            pass
+    return ids
+
+
+def _offer_tier(offer_id: int) -> str:
+    """Determine data tier from offer ID range."""
+    if offer_id >= 64:
+        return "A"
+    if offer_id >= 55:
+        return "B"
+    if offer_id >= 49:
+        return "C"
+    return "D"
+
+
 def _build_offer_ids(summary: dict, only_offers: str | None = None) -> list[int]:
     """
     Build the list of offer IDs to process.
@@ -67,6 +90,8 @@ def _build_offer_ids(summary: dict, only_offers: str | None = None) -> list[int]
 
     Returns sorted list of offer IDs.
     """
+    available = _discover_cleaned_offer_ids()
+
     if only_offers:
         ids = set()
         for part in only_offers.split(","):
@@ -76,19 +101,11 @@ def _build_offer_ids(summary: dict, only_offers: str | None = None) -> list[int]
                 ids.update(range(int(lo), int(hi) + 1))
             else:
                 ids.add(int(part))
-        # Filter to offers that actually have cleaned CSVs
-        available = {int(k) for k in summary.get("offers", {}).keys()}
         return sorted(ids & available)
 
     # Default: use Tier A offers only (reliable data quality).
     # Use --only-offers to include Tier B/C/D.
-    offers_meta = summary.get("offers", {})
-    available = set()
-    for k, meta in offers_meta.items():
-        tier = meta.get("tier", "?")
-        if tier == "A":
-            available.add(int(k))
-    return sorted(available)
+    return sorted(oid for oid in available if _offer_tier(oid) == "A")
 
 
 def _find_xlsx_path(offer_id: int) -> Path | None:
@@ -269,46 +286,6 @@ def build_item_lookup(
             "shape": shape,
         }
     return lookup
-
-
-def infer_box_tier_from_summary(offer_id: int, box_name: str, summary: dict) -> str:
-    """
-    Infer box size tier.
-
-    For standalone boxes, use the size from summary. For merged (email) boxes,
-    query the DB to see what size mystery box they bought.
-    """
-    offer_key = str(offer_id)
-    offer_meta = summary.get("offers", {}).get(offer_key, {})
-    box_sizes = offer_meta.get("box_sizes", {})
-    box_types = offer_meta.get("box_types", {})
-
-    # If summary has an explicit size, use it
-    size = box_sizes.get(box_name)
-    if size:
-        return size
-
-    # For merged boxes (emails), look up from DB
-    if box_types.get(box_name) == "merged":
-        return _lookup_buyer_tier(offer_id, box_name)
-
-    # Default
-    return "medium"
-
-
-def _lookup_buyer_tier(offer_id: int, email: str) -> str:
-    """Look up the tier a buyer purchased from the DB."""
-    buyers = fetch_mystery_box_buyers(offer_id)
-    for buyer in buyers:
-        if buyer["user_email"] == email:
-            name = buyer["offer_part_name"].lower()
-            if "small" in name:
-                return "small"
-            if "medium" in name:
-                return "medium"
-            if "large" in name:
-                return "large"
-    return "medium"  # default
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +535,9 @@ def _process_offer_quiet(
 
     manual_metrics = []
     for bn in box_names:
-        tier = infer_box_tier_from_summary(offer_id, bn, summary)
+        tier = infer_box_tier(offer_id, bn, summary)
+        if tier is None:
+            continue
         box_allocs = {}
         for item_id, per_box in hist_allocs.items():
             qty = per_box.get(bn, 0)

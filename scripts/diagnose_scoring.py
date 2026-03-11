@@ -21,7 +21,7 @@ logging.getLogger("paramiko").setLevel(logging.WARNING)
 logging.getLogger("allocator.categorizer").setLevel(logging.ERROR)
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
-from allocator.box_parser import classify_box
+from allocator.box_parser import classify_box, infer_box_tier
 from allocator.config import (
     BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
@@ -32,24 +32,16 @@ from allocator.config import (
     FAIRNESS_PENALTY_MULTIPLIER,
     MAX_COMPOSITE_SCORE,
     PREF_VIOLATION_PENALTY,
-    VALUE_ACCEPT_HIGH,
-    VALUE_ACCEPT_LOW,
-    VALUE_FAR_PENALTY_RATE,
-    VALUE_HARD_HIGH,
-    VALUE_NEAR_PENALTY_RATE,
-    VALUE_OVER_FAR_RATE,
-    VALUE_OVER_MODERATE_RATE,
-    VALUE_SWEET_HIGH,
-    VALUE_SWEET_LOW,
+    VALUE_PENALTY_EXPONENT,
+    VALUE_SWEET_FROM,
+    VALUE_SWEET_TO,
 )
 from allocator.strategies._scoring import value_penalty
-from allocator.db import fetch_mystery_box_buyers
 from compare import (
     build_item_lookup,
     compute_available_tags,
     compute_box_metrics,
     compute_composite_score,
-    infer_box_tier_from_summary,
     load_historical_csv,
     load_summary,
     read_xlsx_pack_overrides,
@@ -104,41 +96,6 @@ def _parse_only_offers(raw: str) -> set[int]:
         else:
             ids.add(int(part))
     return ids
-
-
-def _lookup_buyer_tier(offer_id: int, email: str) -> str:
-    """Look up the tier a buyer purchased from the DB."""
-    buyers = fetch_mystery_box_buyers(offer_id)
-    for buyer in buyers:
-        if buyer["user_email"] == email:
-            name = buyer["offer_part_name"].lower()
-            if "small" in name:
-                return "small"
-            if "medium" in name:
-                return "medium"
-            if "large" in name:
-                return "large"
-    return "medium"
-
-
-def _infer_box_tier(offer_id: int, box_name: str, summary: dict) -> str:
-    """Infer box size tier, using summary.json when available, else box_parser + DB."""
-    offer_key = str(offer_id)
-    offer_meta = summary.get("offers", {}).get(offer_key, {})
-    box_sizes = offer_meta.get("box_sizes", {})
-
-    # summary.json has explicit size
-    size = box_sizes.get(box_name)
-    if size:
-        return size
-
-    # Fall back to box_parser (handles standalone name formats)
-    _, size_tier, _ = classify_box(box_name)
-    if size_tier:
-        return size_tier
-
-    # For email-style merged boxes (or unrecognized names), query DB
-    return _lookup_buyer_tier(offer_id, box_name)
 
 
 _SKIP_BOX_NAMES = {"Unallocated", "unallocated", "Stock", "stock", "Buffer", "buffer",
@@ -211,7 +168,9 @@ def collect_offer(offer_id: int, summary: dict) -> dict | None:
     # Compute per-box metrics
     box_metrics = []
     for bn in box_names:
-        tier = _infer_box_tier(offer_id, bn, summary)
+        tier = infer_box_tier(offer_id, bn, summary)
+        if tier is None:
+            continue
         box_allocs = {}
         for item_id, per_box in hist_allocs.items():
             qty = per_box.get(bn, 0)
@@ -356,7 +315,7 @@ def compute_aggregate_stats(boxes: list[dict]) -> dict:
             "std": round(std_vp, 2),
             "percentiles": {str(k): round(v, 1) for k, v in
                             _percentiles(vp_vals, [5, 25, 50, 75, 95]).items()},
-            "in_sweet_spot": sum(1 for v in vp_vals if VALUE_SWEET_LOW <= v <= VALUE_SWEET_HIGH),
+            "in_sweet_spot": sum(1 for v in vp_vals if VALUE_SWEET_FROM <= v <= VALUE_SWEET_TO),
             "below_100": sum(1 for v in vp_vals if v < 100),
             "above_130": sum(1 for v in vp_vals if v > 130),
         },
@@ -441,29 +400,14 @@ def compute_what_if_sweet_spots(boxes: list[dict]) -> list[dict]:
 
 
 def _value_penalty_custom(vp: float, sweet_low: float, sweet_high: float) -> float:
-    """Value penalty with custom sweet spot bounds, keeping other thresholds relative."""
+    """Value penalty with custom sweet spot bounds, same power function."""
     if sweet_low <= vp <= sweet_high:
         return 0.0
-
-    # Keep the same penalty structure but shifted
-    heavy_threshold = sweet_low - (VALUE_SWEET_LOW - VALUE_ACCEPT_LOW)
-    over_soft = sweet_high + (VALUE_ACCEPT_HIGH - VALUE_SWEET_HIGH)
-    over_hard = sweet_high + (VALUE_HARD_HIGH - VALUE_SWEET_HIGH)
-
-    near_base = (sweet_low - heavy_threshold) * VALUE_NEAR_PENALTY_RATE
-    over_soft_base = (over_soft - sweet_high) * VALUE_NEAR_PENALTY_RATE
-    over_hard_base = over_soft_base + (over_hard - over_soft) * VALUE_OVER_MODERATE_RATE
-
-    if heavy_threshold <= vp < sweet_low:
-        return (sweet_low - vp) * VALUE_NEAR_PENALTY_RATE
-    if sweet_high < vp <= over_soft:
-        return (vp - sweet_high) * VALUE_NEAR_PENALTY_RATE
-    if vp < heavy_threshold:
-        return near_base + (heavy_threshold - vp) * VALUE_FAR_PENALTY_RATE
-    if vp <= over_hard:
-        return over_soft_base + (vp - over_soft) * VALUE_OVER_MODERATE_RATE
-    # vp > over_hard
-    return over_hard_base + (vp - over_hard) * VALUE_FAR_PENALTY_RATE
+    if vp < sweet_low:
+        x = sweet_low - vp
+    else:
+        x = vp - sweet_high
+    return x ** VALUE_PENALTY_EXPONENT
 
 
 def _composite_from_penalties(boxes: list[dict]) -> dict:
@@ -551,23 +495,21 @@ def print_summary(offers: list[dict], boxes: list[dict], what_if: list[dict]):
 
     # Value% distribution
     vp_vals = [b["value_pct"] for b in boxes]
+    sf = VALUE_SWEET_FROM
+    st = VALUE_SWEET_TO
     if vp_vals:
         below_100 = sum(1 for v in vp_vals if v < 100)
-        in_100_110 = sum(1 for v in vp_vals if 100 <= v < VALUE_ACCEPT_LOW)
-        in_110_114 = sum(1 for v in vp_vals if VALUE_ACCEPT_LOW <= v < VALUE_SWEET_LOW)
-        in_sweet = sum(1 for v in vp_vals if VALUE_SWEET_LOW <= v <= VALUE_SWEET_HIGH)
-        in_117_120 = sum(1 for v in vp_vals if VALUE_SWEET_HIGH < v <= VALUE_ACCEPT_HIGH)
-        in_120_130 = sum(1 for v in vp_vals if VALUE_ACCEPT_HIGH < v <= VALUE_HARD_HIGH)
-        above_130 = sum(1 for v in vp_vals if v > VALUE_HARD_HIGH)
+        in_100_sf = sum(1 for v in vp_vals if 100 <= v < sf)
+        in_sweet = sum(1 for v in vp_vals if sf <= v <= st)
+        in_st_130 = sum(1 for v in vp_vals if st < v <= 130)
+        above_130 = sum(1 for v in vp_vals if v > 130)
 
         print(f"  {_BOLD}Value% Distribution ({n_boxes} boxes){_RESET}")
-        print(f"    < 100%:     {below_100:>4}  ({below_100/n_boxes*100:>5.1f}%)  {_RED}heavy penalty{_RESET}")
-        print(f"    100-110%:   {in_100_110:>4}  ({in_100_110/n_boxes*100:>5.1f}%)  {_RED}heavy penalty{_RESET}")
-        print(f"    110-114%:   {in_110_114:>4}  ({in_110_114/n_boxes*100:>5.1f}%)  {_YELLOW}near penalty{_RESET}")
-        print(f"    114-117%:   {in_sweet:>4}  ({in_sweet/n_boxes*100:>5.1f}%)  {_GREEN}sweet spot{_RESET}")
-        print(f"    117-120%:   {in_117_120:>4}  ({in_117_120/n_boxes*100:>5.1f}%)  {_YELLOW}near penalty{_RESET}")
-        print(f"    120-130%:   {in_120_130:>4}  ({in_120_130/n_boxes*100:>5.1f}%)  {_YELLOW}moderate penalty{_RESET}")
-        print(f"    > 130%:     {above_130:>4}  ({above_130/n_boxes*100:>5.1f}%)  {_RED}heavy penalty{_RESET}")
+        print(f"    < 100%:     {below_100:>4}  ({below_100/n_boxes*100:>5.1f}%)  {_RED}penalty{_RESET}")
+        print(f"    100-{sf}%:  {in_100_sf:>4}  ({in_100_sf/n_boxes*100:>5.1f}%)  {_YELLOW}penalty{_RESET}")
+        print(f"    {sf}-{st}%:  {in_sweet:>4}  ({in_sweet/n_boxes*100:>5.1f}%)  {_GREEN}sweet spot{_RESET}")
+        print(f"    {st}-130%:  {in_st_130:>4}  ({in_st_130/n_boxes*100:>5.1f}%)  {_YELLOW}penalty{_RESET}")
+        print(f"    > 130%:     {above_130:>4}  ({above_130/n_boxes*100:>5.1f}%)  {_RED}penalty{_RESET}")
         print()
 
     # What-if sweet spot comparison
@@ -658,13 +600,8 @@ def write_json_report(offers: list[dict], boxes: list[dict], what_if: list[dict]
                       aggregate: dict):
     """Write structured JSON report to diagnostics/report.json."""
     config = {
-        "sweet_spot": [VALUE_SWEET_LOW, VALUE_SWEET_HIGH],
-        "heavy_penalty_threshold": VALUE_ACCEPT_LOW,
-        "over_soft_threshold": VALUE_ACCEPT_HIGH,
-        "over_hard_threshold": VALUE_HARD_HIGH,
-        "near_penalty_rate": VALUE_NEAR_PENALTY_RATE,
-        "far_penalty_rate": VALUE_FAR_PENALTY_RATE,
-        "over_moderate_rate": VALUE_OVER_MODERATE_RATE,
+        "sweet_spot": [VALUE_SWEET_FROM, VALUE_SWEET_TO],
+        "penalty_exponent": VALUE_PENALTY_EXPONENT,
         "dupe_penalty_multiplier": DUPE_PENALTY_MULTIPLIER,
         "dupe_penalty_floor": DUPE_PENALTY_FLOOR,
         "diversity_penalty_multiplier": DIVERSITY_PENALTY_MULTIPLIER,
@@ -810,7 +747,7 @@ def _plot_value_distribution(boxes, plt):
         return
     fig, ax1 = plt.subplots()
     ax1.hist(vp_vals, bins=40, range=(80, 160), color="#3498db", edgecolor="white", alpha=0.7)
-    ax1.axvspan(VALUE_SWEET_LOW, VALUE_SWEET_HIGH, alpha=0.2, color="#2ecc71", label="Sweet spot")
+    ax1.axvspan(VALUE_SWEET_FROM, VALUE_SWEET_TO, alpha=0.2, color="#2ecc71", label="Sweet spot")
     ax1.set_xlabel("Value % of target")
     ax1.set_ylabel("Box count")
     ax1.set_title("Value% Distribution with Penalty Curve")
@@ -913,7 +850,7 @@ def _plot_size_tier_comparison(boxes, plt):
     for patch, color in zip(bp["boxes"], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.5)
-    ax.axhspan(VALUE_SWEET_LOW, VALUE_SWEET_HIGH, alpha=0.15, color="#2ecc71")
+    ax.axhspan(VALUE_SWEET_FROM, VALUE_SWEET_TO, alpha=0.15, color="#2ecc71")
     ax.set_ylabel("Value % of target")
     ax.set_title("Value% by Size Tier")
     plt.tight_layout()
@@ -981,7 +918,7 @@ def _plot_pricing_scatter(offers, plt, mpatches):
         ax.scatter(o["offer_id"], median_vp, color=color, marker=marker, s=40, zorder=3)
 
     ax.axhspan(100, 130, alpha=0.1, color="#2ecc71", label="100-130% range")
-    ax.axhspan(VALUE_SWEET_LOW, VALUE_SWEET_HIGH, alpha=0.2, color="#2ecc71", label="Sweet spot")
+    ax.axhspan(VALUE_SWEET_FROM, VALUE_SWEET_TO, alpha=0.2, color="#2ecc71", label="Sweet spot")
     handles = [
         mpatches.Patch(color="#3498db", label="Plausible"),
         mpatches.Patch(color="#e74c3c", label="Flagged"),

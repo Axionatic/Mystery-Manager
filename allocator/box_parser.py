@@ -14,6 +14,7 @@ Handles the full variety of naming conventions across historical offers:
   - "Box 26: Lge Charity", "Box 27: Md Name #1"
 """
 
+import logging
 import re
 
 from allocator.config import (
@@ -23,6 +24,8 @@ from allocator.config import (
     STAFF_IDENTIFIERS,
     STANDALONE_NAME_TO_EMAIL,
 )
+
+logger = logging.getLogger(__name__)
 
 # Size keyword → normalized tier
 _SIZE_MAP = {
@@ -197,3 +200,46 @@ def classify_box(header: str) -> tuple[str, str | None, str]:
 
     # Everything else is a standalone customer box
     return (cleaned, size_tier, "standalone")
+
+
+def _lookup_buyer_tier(offer_id: int, email: str) -> str | None:
+    """Look up the tier a buyer purchased from the DB. Returns None if not found."""
+    from allocator.db import fetch_mystery_box_buyers
+    buyers = fetch_mystery_box_buyers(offer_id)
+    for buyer in buyers:
+        if buyer["user_email"] == email:
+            name = buyer["offer_part_name"].lower()
+            if "small" in name:
+                return "small"
+            if "medium" in name:
+                return "medium"
+            if "large" in name:
+                return "large"
+    return None
+
+
+def infer_box_tier(offer_id: int, box_name: str, summary: dict) -> str | None:
+    """Infer box size tier from summary.json, box name parsing, or DB lookup.
+
+    Returns None with a warning if tier cannot be determined.
+    """
+    # 1. summary.json explicit override
+    offer_meta = summary.get("offers", {}).get(str(offer_id), {})
+    size = offer_meta.get("box_sizes", {}).get(box_name)
+    if size:
+        return size
+
+    # 2. box_parser for standalone names (e.g. "Sm Jonno", "?Lg Maria")
+    _, size_tier, _ = classify_box(box_name)
+    if size_tier:
+        return size_tier
+
+    # 3. DB lookup for email-style merged boxes
+    if "@" in box_name:
+        tier = _lookup_buyer_tier(offer_id, box_name)
+        if tier:
+            return tier
+
+    # Can't determine tier — warn and return None
+    logger.warning("Offer %d: cannot determine tier for box '%s', excluding from scoring", offer_id, box_name)
+    return None
