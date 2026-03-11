@@ -250,13 +250,18 @@ def get_connection() -> mysql.connector.MySQLConnection:
         conn.close = close_with_release
         return conn
     else:
-        return mysql.connector.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "3306")),
-            database=os.getenv("DB_NAME", "jointly_db"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-        )
+        kwargs = {
+            "database": os.getenv("DB_NAME", "jointly_db"),
+            "user": os.getenv("DB_USER"),
+            "password": os.getenv("DB_PASSWORD"),
+        }
+        unix_socket = os.getenv("DB_SOCKET")
+        if unix_socket:
+            kwargs["unix_socket"] = unix_socket
+        else:
+            kwargs["host"] = os.getenv("DB_HOST", "localhost")
+            kwargs["port"] = int(os.getenv("DB_PORT", "3306"))
+        return mysql.connector.connect(**kwargs)
 
 
 # ---------------------------------------------------------------------------
