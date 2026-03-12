@@ -551,7 +551,10 @@ def _read_data_rows(ws, header_row, id_col, mystery_cols, charity_cols):
         row_data = {"id": row_id}
         for col_idx, col_header, col_type, _ in mystery_cols:
             val = row[col_idx] if col_idx < len(row) else None
-            raw = float(val) if val else 0.0
+            try:
+                raw = float(val) if val and str(val).strip() else 0.0
+            except (ValueError, TypeError):
+                raw = 0.0
             row_data[col_header] = int(raw) if raw == int(raw) else raw
         rows.append(row_data)
 
@@ -560,7 +563,10 @@ def _read_data_rows(ws, header_row, id_col, mystery_cols, charity_cols):
             charity_data = {"id": row_id}
             for col_idx, col_header in charity_cols:
                 val = row[col_idx] if col_idx < len(row) else None
-                raw = float(val) if val else 0.0
+                try:
+                    raw = float(val) if val and str(val).strip() else 0.0
+                except (ValueError, TypeError):
+                    raw = 0.0
                 charity_data[col_header] = int(raw) if raw == int(raw) else raw
             charity_rows.append(charity_data)
 

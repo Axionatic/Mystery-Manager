@@ -42,12 +42,14 @@ from allocator.strategies import DEFAULT_STRATEGY, get_strategy
 logger = logging.getLogger(__name__)
 
 
-def infer_tier_from_name(name: str) -> str:
+def infer_tier_from_name(name: str) -> str | None:
     """Infer box tier from offer_part name like 'A medium mystery box!'.
 
     Uses simple substring matching because the size keyword appears in the
     middle of the string (not as a prefix/suffix), so parse_box_name() would
     return None for all these names.
+
+    Returns None if no tier keyword is found.
     """
     lower = name.lower()
     if "small" in lower:
@@ -56,7 +58,8 @@ def infer_tier_from_name(name: str) -> str:
         return "medium"
     if "large" in lower:
         return "large"
-    return "medium"  # default
+    logger.warning("Cannot infer tier from offer_part name '%s' — skipping buyer", name)
+    return None
 
 
 def parse_preference(selected_option: str | None) -> str | None:
@@ -145,7 +148,9 @@ def build_boxes_from_db(offer_id: int) -> list[MysteryBox]:
             continue
 
         tier = infer_tier_from_name(buyer["offer_part_name"])
-        tier_config = BOX_TIERS.get(tier, BOX_TIERS["medium"])
+        if tier is None:
+            continue
+        tier_config = BOX_TIERS[tier]
 
         preference = parse_preference(buyer["selected_option"])
         exclusions = []
