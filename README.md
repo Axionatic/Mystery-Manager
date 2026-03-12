@@ -34,7 +34,8 @@ Mystery-Manager/
 │   ├── validate_cleaned.py #   Structural + DB checks on cleaned CSVs
 │   ├── validate_prices.py  #   XLSX vs DB price validation
 │   ├── standardize_filenames.py  # Canonical XLSX filenames
-│   └── compare_llm_outputs.py   # Side-by-side LLM extraction comparison
+│   ├── compare_llm_outputs.py   # Side-by-side LLM extraction comparison
+│   └── analyze_offer_values.py  # Per-offer value targets by size tier
 ├── docs/                   # Design docs (gitignored)
 ├── historical/             # Source XLSX files (gitignored)
 ├── cleaned/                # Processed CSVs (gitignored)

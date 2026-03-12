@@ -16,6 +16,8 @@ python3 compare.py                                                # validate vs 
 python3 compare.py --algorithm deal-topup                         # specific strategy
 python3 compare.py --only-offers 55-63                            # Tier B
 python3 compare.py --all-strategies                               # full leaderboard
+python3 compare.py --detail                                       # per-offer breakdown + detailed JSON
+python3 compare.py --csv                                          # write per-box metrics CSV to output/
 ```
 
 ### Library tools (allocator/)
