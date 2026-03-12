@@ -138,6 +138,9 @@ STANDALONE_NAME_TO_EMAIL = _IDENTIFIERS["standalone_name_to_email"]
 # Explicit size overrides for non-standard box names
 BOX_SIZE_OVERRIDES = _IDENTIFIERS.get("box_size_overrides", {})
 
+# Per-offer size overrides (keyed by offer ID string)
+PER_OFFER_BOX_SIZE_OVERRIDES = _IDENTIFIERS.get("per_offer_box_size_overrides", {})
+
 # Special columns to skip in historical data
 STOCK_IDENTIFIERS = {"Stock", "stock", "STOCK"}
 BUFFER_IDENTIFIERS = {"Buffer", "buffer", "Volunteers", "volunteers"}

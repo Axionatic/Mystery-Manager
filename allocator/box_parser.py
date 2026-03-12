@@ -21,6 +21,7 @@ from allocator.config import (
     BOX_SIZE_OVERRIDES,
     CHARITY_NAME,
     DONATION_IDENTIFIERS,
+    PER_OFFER_BOX_SIZE_OVERRIDES,
     STAFF_IDENTIFIERS,
     STANDALONE_NAME_TO_EMAIL,
 )
@@ -223,6 +224,11 @@ def infer_box_tier(offer_id: int, box_name: str, summary: dict) -> str | None:
 
     Returns None with a warning if tier cannot be determined.
     """
+    # 0. Per-offer explicit override (identifiers.json)
+    per_offer = PER_OFFER_BOX_SIZE_OVERRIDES.get(str(offer_id), {}).get(box_name)
+    if per_offer:
+        return per_offer
+
     # 1. summary.json explicit override
     offer_meta = summary.get("offers", {}).get(str(offer_id), {})
     size = offer_meta.get("box_sizes", {}).get(box_name)
