@@ -326,8 +326,8 @@ def compute_box_metrics(
         fungible_dupes, pref_violations
     Or None if no items could be resolved.
     """
-    price = BOX_TIERS.get(tier, BOX_TIERS["medium"])["price"]
-    target = BOX_TIERS.get(tier, BOX_TIERS["medium"])["target_value"]
+    price = BOX_TIERS[tier]["price"]
+    target = BOX_TIERS[tier]["target_value"]
 
     total_value = 0
     fruit_value = 0
@@ -949,6 +949,73 @@ def print_detail(algorithm: str, per_offer: dict, all_algo: list[dict]):
     print()
 
 
+def _box_main_issue(value_pen, dupe_pen, div_pen):
+    """Classify the main issue(s) for a box based on penalty magnitudes."""
+    issues = []
+    if value_pen >= 2.0:
+        issues.append("value")
+    if dupe_pen >= 1.0:
+        issues.append("dupes")
+    if div_pen >= 5.0:
+        issues.append("diversity")
+    return ", ".join(issues) if issues else "ok"
+
+
+def write_csv(label: str, per_offer: dict, source: str):
+    """Write per-box metrics CSV to output/.
+
+    source: "manual" or "algo" — selects which side of per_offer to use.
+    """
+    out_dir = Path(__file__).parent / "output"
+    out_dir.mkdir(exist_ok=True)
+    csv_path = out_dir / f"{label}_scores.csv"
+
+    fieldnames = [
+        "offer", "box", "tier", "target_value_cents", "total_value_cents",
+        "value_pct", "score", "value_penalty", "dupe_penalty",
+        "diversity_penalty", "diversity_score", "bad_dupes",
+        "fungible_dupes", "slot_dupes", "unique_items", "fruit_pct",
+        "pref_violations", "main_issue",
+    ]
+
+    rows = []
+    for offer_id in sorted(per_offer.keys(), key=int):
+        manual, algo = per_offer[offer_id]
+        boxes = manual if source == "manual" else algo
+        for m in boxes:
+            vp = value_penalty(m["value_pct"])
+            dp = m["weighted_dupe_penalty"] * DUPE_PENALTY_MULTIPLIER
+            dv = (1.0 - m["diversity_score"]) * DIVERSITY_PENALTY_MULTIPLIER
+            score = MAX_COMPOSITE_SCORE - vp - dp - dv
+            rows.append({
+                "offer": offer_id,
+                "box": m["box_name"],
+                "tier": m["tier"],
+                "target_value_cents": m["target_value"],
+                "total_value_cents": m["total_value"],
+                "value_pct": round(m["value_pct"], 2),
+                "score": round(score, 2),
+                "value_penalty": round(vp, 2),
+                "dupe_penalty": round(dp, 1),
+                "diversity_penalty": round(dv, 2),
+                "diversity_score": round(m["diversity_score"], 4),
+                "bad_dupes": m["bad_dupes"],
+                "fungible_dupes": m["fungible_dupes"],
+                "slot_dupes": m["slot_dupes"],
+                "unique_items": m["unique_items"],
+                "fruit_pct": round(m["fruit_pct"], 1),
+                "pref_violations": m["pref_violations"],
+                "main_issue": _box_main_issue(vp, dp, dv),
+            })
+
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"  CSV written to {csv_path} ({len(rows)} boxes)")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Compare algorithm vs historical allocations")
@@ -957,6 +1024,8 @@ def main():
                         help="Run all registered strategies and print a leaderboard")
     parser.add_argument("--detail", action="store_true",
                         help="Print per-offer breakdown and write detailed JSON")
+    parser.add_argument("--csv", action="store_true",
+                        help="Write per-box CSV to output/ (implies --detail)")
     parser.add_argument("--workers", type=int, default=None,
                         help="Parallel workers (default: cpu_count)")
     parser.add_argument("--sequential", action="store_true",
@@ -964,6 +1033,8 @@ def main():
     parser.add_argument("--only-offers", type=str, default=None,
                         help="Comma-separated offer IDs/ranges (e.g. '55,60,70-80')")
     args = parser.parse_args()
+    if args.csv:
+        args.detail = True
 
     # --verbose not a flag yet, but process_offer uses verbose=True by default
     # for single-strategy mode. Parallel mode suppresses per-offer output.
@@ -1188,7 +1259,7 @@ def main():
         if not mt and not at:
             continue
 
-        target_val = BOX_TIERS.get(tier, BOX_TIERS["medium"])["target_value"]
+        target_val = BOX_TIERS[tier]["target_value"]
         print(f"\n  --- {tier.upper()} tier (target: ${target_val/100:.2f}) ---")
         print(header)
         print(sep)
@@ -1276,6 +1347,12 @@ def main():
     # --- Detail mode ---
     if args.detail:
         print_detail(algorithm, per_offer, all_algo)
+
+    # --- CSV output ---
+    if args.csv:
+        alg_name = algorithm or "deal-topup"
+        write_csv("manual", per_offer, "manual")
+        write_csv(alg_name, per_offer, "algo")
 
     # --- Interpretation ---
     print(f"\n{'='*70}")
