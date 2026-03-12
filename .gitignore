@@ -13,6 +13,7 @@ offer_*.xlsx
 # Generated outputs
 benchmark_results/
 diagnostics/
+output/
 
 # Cached LLM name match results
 mappings/
