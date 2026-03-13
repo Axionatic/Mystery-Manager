@@ -1,0 +1,328 @@
+#db-status {
+    margin: 1 2;
+    text-style: bold;
+}
+
+#db-status.db-connected {
+    color: $text-success;
+}
+
+#db-status.db-disconnected {
+    color: $text-error;
+}
+
+MainMenuScreen ListView {
+    margin: 1 2;
+}
+
+MainMenuScreen ListItem:disabled {
+    opacity: 0.4;
+    text-style: italic;
+}
+
+/* Early wizard steps */
+FileStep ListView,
+StrategyStep ListView {
+    margin: 1 2;
+}
+
+#offer-id-error {
+    color: $text-error;
+    margin: 0 2;
+}
+
+#offer-id-error.hidden {
+    display: none;
+}
+
+OfferIdStep Input {
+    margin: 1 2;
+    width: 30;
+}
+
+OfferIdStep Button {
+    margin: 1 2;
+}
+
+/* Strategy step */
+StrategyStep #strategy-list {
+    margin: 1 2;
+    height: 1fr;
+}
+
+/* Confirm screen */
+ConfirmScreen #confirm-title {
+    margin: 2 2 1 2;
+    text-style: bold;
+}
+
+ConfirmScreen #confirm-file,
+ConfirmScreen #confirm-offer,
+ConfirmScreen #confirm-boxes,
+ConfirmScreen #confirm-strategy {
+    margin: 0 4;
+}
+
+ConfirmScreen #confirm-prompt {
+    margin: 2 2;
+    color: $text-muted;
+}
+
+/* Progress screen */
+ProgressScreen #progress-label {
+    margin: 2 2 0 2;
+    text-style: bold;
+}
+
+ProgressScreen #progress-details {
+    margin: 0 2 1 2;
+    color: $text-muted;
+}
+
+ProgressScreen #elapsed {
+    margin: 1 2;
+}
+
+ProgressScreen #error-label {
+    display: none;
+    margin: 1 2;
+    color: $text-error;
+}
+
+ProgressScreen #error-label.error-visible {
+    display: block;
+}
+
+/* Results screen */
+ResultsScreen #aggregate-label {
+    margin: 1 2;
+    text-style: bold;
+}
+
+ResultsScreen DataTable {
+    margin: 1 2;
+    height: 1fr;
+}
+
+ResultsScreen #charity-label,
+ResultsScreen #stock-label {
+    margin: 0 2;
+    color: $text-muted;
+}
+
+ResultsScreen #export-status {
+    margin: 1 2;
+    color: $text-success;
+}
+
+/* Help overlay modal */
+HelpOverlayScreen {
+    align: center middle;
+}
+
+HelpOverlayScreen > Label {
+    width: 70;
+    background: $surface;
+    padding: 0 2;
+}
+
+HelpOverlayScreen #help-title {
+    text-style: bold;
+    padding-top: 1;
+    border-top: solid $primary;
+    border-left: solid $primary;
+    border-right: solid $primary;
+}
+
+HelpOverlayScreen #help-body {
+    margin: 1 0;
+}
+
+HelpOverlayScreen #help-hint {
+    color: $text-muted;
+    padding-bottom: 1;
+    border-bottom: solid $primary;
+    border-left: solid $primary;
+    border-right: solid $primary;
+}
+
+/* Glossary screen two-panel layout */
+GlossaryScreen #glossary-layout {
+    height: 1fr;
+}
+
+GlossaryScreen #glossary-list {
+    width: 30;
+    border-right: solid $primary;
+    margin: 0;
+}
+
+GlossaryScreen #glossary-detail {
+    width: 1fr;
+    padding: 1 2;
+}
+
+/* Strategy comparison screen */
+StrategyComparisonScreen #confirm-message {
+    margin: 2 2;
+}
+
+StrategyComparisonScreen #confirm-prompt {
+    margin: 1 2;
+    color: $text-muted;
+}
+
+StrategyComparisonScreen #progress-label {
+    margin: 2 2 0 2;
+    text-style: bold;
+}
+
+StrategyComparisonScreen #elapsed-label {
+    margin: 0 2 1 2;
+    color: $text-muted;
+}
+
+StrategyComparisonScreen #recommendation-label {
+    margin: 1 2;
+    text-style: bold;
+}
+
+StrategyComparisonScreen DataTable {
+    margin: 1 2;
+    height: 1fr;
+}
+
+StrategyComparisonScreen #error-label {
+    display: none;
+    margin: 1 2;
+    color: $text-error;
+}
+
+StrategyComparisonScreen #error-label.error-visible {
+    display: block;
+}
+
+StrategyComparisonScreen .hidden {
+    display: none;
+}
+
+/* Historical data screen */
+HistoricalDataScreen #hist-layout {
+    height: 1fr;
+}
+
+HistoricalDataScreen #offer-table {
+    width: 45;
+    border-right: solid $primary;
+}
+
+HistoricalDataScreen #dashboard-panel {
+    width: 1fr;
+    padding: 1 2;
+}
+
+HistoricalDataScreen #dash-summary {
+    margin-bottom: 1;
+}
+
+HistoricalDataScreen #validate-btn {
+    margin-bottom: 1;
+}
+
+HistoricalDataScreen #detail-panel {
+    margin-top: 1;
+    color: $text-muted;
+}
+
+HistoricalDataScreen .hidden {
+    display: none;
+}
+
+HistoricalDataScreen #running-label {
+    margin: 2 2 0 2;
+    text-style: bold;
+}
+
+HistoricalDataScreen #running-elapsed {
+    margin: 0 2 1 2;
+    color: $text-muted;
+}
+
+HistoricalDataScreen #results-summary {
+    margin: 1 0 0 0;
+    text-style: bold;
+}
+
+HistoricalDataScreen #detail-table {
+    height: 1fr;
+    margin-top: 1;
+}
+
+/* Clean History screen */
+CleanHistoryScreen #clean-config {
+    padding: 1 2;
+}
+
+CleanHistoryScreen #clean-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+CleanHistoryScreen RadioSet {
+    margin: 1 0;
+}
+
+CleanHistoryScreen #standard-options,
+CleanHistoryScreen #llm-options,
+CleanHistoryScreen #llm-force-option,
+CleanHistoryScreen #offers-row {
+    margin: 1 0;
+    height: auto;
+}
+
+CleanHistoryScreen Input {
+    width: 30;
+}
+
+CleanHistoryScreen #offers-error {
+    color: $text-error;
+    margin: 0 0;
+}
+
+CleanHistoryScreen #config-summary {
+    margin: 1 0;
+    color: $text-muted;
+}
+
+CleanHistoryScreen #llm-warning {
+    color: $text-warning;
+    margin: 0 0;
+}
+
+CleanHistoryScreen #run-btn {
+    margin: 1 0;
+}
+
+CleanHistoryScreen #clean-progress {
+    margin: 2 2 0 2;
+    text-style: bold;
+}
+
+CleanHistoryScreen #clean-elapsed {
+    margin: 0 2 1 2;
+    color: $text-muted;
+}
+
+CleanHistoryScreen #clean-summary {
+    margin: 1 2;
+    text-style: bold;
+}
+
+CleanHistoryScreen #clean-results-table {
+    margin: 1 2;
+    height: 1fr;
+}
+
+CleanHistoryScreen .hidden {
+    display: none;
+}
