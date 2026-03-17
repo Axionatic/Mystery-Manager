@@ -4,6 +4,9 @@
 identifiers.json
 queries.json
 scoring_config.json
+# But track test fixtures
+!tests/fixtures/identifiers.json
+!tests/fixtures/scoring_config.json
 
 # Business data (customer orders, historical allocations)
 historical/
@@ -24,6 +27,8 @@ mappings/
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+pytest-of-*/
 
 # Claude Code local settings
 .claude/

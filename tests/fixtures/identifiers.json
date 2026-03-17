@@ -1,0 +1,20 @@
+{
+  "donation_identifiers": [
+    "donor@test.example",
+    "Sm Charity Test",
+    "Lg Charity Test"
+  ],
+  "staff_identifiers": [
+    "staff@test.example"
+  ],
+  "standalone_name_to_email": {
+    "TestAlias": "alias@test.example"
+  },
+  "charity_keywords": [
+    "charity test"
+  ],
+  "box_size_overrides": {
+    "Override Box": "medium"
+  },
+  "per_offer_box_size_overrides": {}
+}
