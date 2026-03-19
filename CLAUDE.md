@@ -34,12 +34,12 @@ python3 allocator/benchmark_extraction.py 5                       # benchmark LL
 ### Tests
 
 ```bash
-python3 -m pytest                                                 # run full suite (253 tests)
+python3 -m pytest                                                 # run full suite (268 tests)
 python3 -m pytest tests/test_strategies.py -v                     # single module, verbose
 python3 -m pytest -k "test_value_penalty"                         # run by name pattern
 ```
 
-Tests use synthetic fixtures (no DB required). See `tests/conftest.py` for factory fixtures and config bootstrap.
+Tests use synthetic fixtures (no DB required). See `tests/conftest.py` for factory fixtures and config bootstrap. `tests/fixtures/desirability_items.csv` provides synthetic desirability data for test isolation.
 
 ### Utility scripts (scripts/)
 
@@ -55,6 +55,8 @@ python3 scripts/standardize_filenames.py --apply                  # apply rename
 python3 scripts/compare_llm_outputs.py                            # side-by-side LLM extraction comparison
 python3 scripts/analyze_offer_values.py                           # per-offer value targets by size tier
 python3 scripts/analyze_offer_values.py --only-offers 64-106      # Tier A only
+python3 scripts/analyze_desirability.py                           # item desirability from packing history
+python3 scripts/analyze_desirability.py --csv --no-plots          # export CSV, skip visuals
 ```
 
 `compare.py` is the primary validation tool — it compares algorithm output against cleaned historical CSVs and prints per-box and aggregate metrics with a composite score. Default run uses Tier A offers only; use `--only-offers` for others.
@@ -98,7 +100,8 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 - **`strategies/`** — pluggable allocation strategies. `__init__.py` has the registry; `deal_topup.py` is the default strategy. `_scoring.py` provides shared penalty functions used by strategies and compare.py. `_helpers.py` has shared constraint checks and diversity scoring.
 - **`models.py`** — `Item`, `MysteryBox`, `CharityBox`, `AllocationResult`, `ExclusionRule`. All prices in cents.
-- **`config.py`** — tier definitions (from `.env`), identifier sets (from `identifiers.json`), scoring/classification config (from `scoring_config.json`). Key exports: `BOX_TIERS`, `FUNGIBLE_GROUPS`, `ITEM_CLASSIFICATIONS`, `DIVERSITY_WEIGHTS`, composite scoring constants.
+- **`config.py`** — tier definitions (from `.env`), identifier sets (from `identifiers.json`), scoring/classification config (from `scoring_config.json`). Key exports: `BOX_TIERS`, `FUNGIBLE_GROUPS`, `ITEM_CLASSIFICATIONS`, `DIVERSITY_WEIGHTS`, `GROUP_QTY_*` (group-qty penalty config), `DESIRABILITY_*` (desirability penalty config), composite scoring constants.
+- **`desirability.py`** — item desirability scores from historical packing. Loads `diagnostics/desirability_items.csv`, applies Bayesian shrinkage, normalises to [0,1]. Exports `get_item_desirability(name)`, `compute_box_desirability(allocations, items)`.
 - **`scorer.py`** — deal-topup specific scoring. `prioritize_items_for_deal()` sorts items for deal phase; `score_topup_candidate()` scores top-up additions with hard constraints and soft scoring.
 - **`db.py`** — SSH tunnel (via paramiko) to MySQL DB. Singleton `TunnelManager` with reference counting. Supports `DB_SOCKET` env var for Unix socket connections (overrides host/port). All query functions are `@functools.cache`-decorated for within-run deduplication. SQL loaded from `queries.json` (gitignored).
 - **`excel_io.py`** — reads `ID` + `Overage` columns from XLSX; writes tab-delimited output for import.
@@ -118,7 +121,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 ### Tests (`tests/`)
 
-253 tests across 13 modules covering models, config, categorizer, scoring, strategies, allocator pipeline, box parser, excel I/O, wizard helpers, and historical service. Uses synthetic fixtures — no DB or network required.
+268 tests across 14 modules covering models, config, categorizer, scoring, desirability, strategies, allocator pipeline, box parser, excel I/O, wizard helpers, and historical service. Uses synthetic fixtures — no DB or network required.
 
 - **`conftest.py`** — test config bootstrap (sets env vars before allocator import), factory fixtures for Item/MysteryBox/CharityBox/AllocationResult.
 - **`tests/fixtures/`** — synthetic `identifiers.json` and `scoring_config.json` for CI portability.
@@ -132,6 +135,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 - **`standardize_filenames.py`** — renames historical XLSX files to canonical `offer_{N}_shopping_list.xlsx` format. (dev tool — infrequent use, kept as standalone)
 - **`compare_llm_outputs.py`** — side-by-side comparison of LLM extraction methods with Jaccard similarity and optional Claude investigation. (dev tool — infrequent use, kept as standalone)
 - **`analyze_offer_values.py`** — per-offer, per-size-tier average box values. Writes `diagnostics/offer_value_targets.json` for training data.
+- **`analyze_desirability.py`** — per-item desirability analysis from historical packing decisions. OLS regression + distribution stats. Writes `diagnostics/desirability_items.csv`.
 
 ## Database gotchas
 
@@ -143,7 +147,7 @@ To add a new strategy: create `allocator/strategies/my_strat.py` with a `run(res
 
 ## Conventions
 
-- Fungible groups prevent putting multiple varieties of the same item (e.g. 3 apple types) in one box. The deal phase skips boxes that already have the group; the top-up scorer returns `-inf` for fungible dupes.
+- Fungible groups limit accumulation of the same item type (e.g. apples) in one box. Each group has a tier-scaled allowance; excess above allowance is penalised with increasing severity. Hard ceiling prevents extreme concentration. The deal phase skips groups at allowance; top-up scorer hard-blocks above the ceiling.
 - Merged boxes (emails) get added to the customer's existing order. Standalone boxes (`?Name` prefix in output) ship separately.
 - `BOX_TIERS` target values are `BOX_TARGET_PCT`% of price (configured in `.env`).
 - Category IDs are configured in `scoring_config.json`.
@@ -154,7 +158,7 @@ Composite scores across 42 Tier A offers (2026-03-11). Update when algorithms ch
 
 Rank order: ilp-optimal > local-search > round-robin > discard-worst > deal-topup > minmax-deficit > greedy-best-fit > manual.
 
-All automated strategies outperform manual packing. Score = 100 minus penalties across value accuracy, duplicate avoidance, diversity coverage, cross-box fairness, and preference compliance.
+All automated strategies outperform manual packing. Score = 100 minus penalties across value accuracy, group-qty excess, diversity coverage, desirability, cross-box fairness, and preference compliance.
 
 ## Historical data tiers
 
