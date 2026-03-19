@@ -5,7 +5,13 @@ Common constraint checks, mutation helpers, and box analysis utilities
 used across multiple strategies.
 """
 
-from allocator.config import BOX_TIERS, DIVERSITY_WEIGHTS, VALUE_CEILING_PCT
+from allocator.config import (
+    BOX_TIERS,
+    DIVERSITY_WEIGHTS,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_TIER_RATIO,
+    VALUE_CEILING_PCT,
+)
 from allocator.models import AllocationResult, Item, MysteryBox
 
 
@@ -30,20 +36,29 @@ def box_fungible_groups(box: MysteryBox, result: AllocationResult) -> set[str]:
 
 
 def has_hard_fungible_conflict(
-    item: Item, box: MysteryBox, result: AllocationResult
+    item: Item, box: MysteryBox, result: AllocationResult, qty: int = 1,
 ) -> bool:
-    """Check if item has a hard fungible conflict (degree >= 1.0) with box contents."""
-    if not item.fungible_group:
-        return False
+    """Check if adding qty of item would push its group total above 2x allowance."""
+    if item.fungible_group:
+        group_key = item.fungible_group
+    else:
+        group_key = f"__item_{item.id}"
+
+    allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+
+    # Compute current group qty in box
+    current_qty = 0
     for alloc_id, alloc_qty in box.allocations.items():
         if alloc_qty > 0 and alloc_id in result.items:
             other = result.items[alloc_id]
-            if (
-                other.fungible_group == item.fungible_group
-                and item.fungible_degree >= 1.0
-            ):
-                return True
-    return False
+            if item.fungible_group:
+                if other.fungible_group == item.fungible_group:
+                    current_qty += alloc_qty
+            else:
+                if alloc_id == item.id:
+                    current_qty += alloc_qty
+
+    return current_qty + qty > 2 * allowance
 
 
 def can_assign(

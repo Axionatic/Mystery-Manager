@@ -11,6 +11,8 @@ from allocator.config import (
     DIVERSITY_WEIGHTS,
     FUNGIBLE_NEUTRAL_SCORE,
     FUNGIBLE_NEW_GROUP_BONUS,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_TIER_RATIO,
     SCORING_WEIGHTS,
     SLOT_DEGREE_THRESHOLD,
     VALUE_CEILING_PCT,
@@ -95,18 +97,20 @@ def score_topup_candidate(
     already_in_box = box.allocations.get(item.id, 0) > 0
     new_item_bonus = 0.0 if already_in_box else 1.0
 
-    # --- fungible_spread: degree-scaled penalty for same-group items ---
+    # --- fungible_spread: qty-based penalty for same-group items ---
     fungible_spread = 0.0
     if item.fungible_group:
-        group_in_box = any(
-            result.items[aid].fungible_group == item.fungible_group
-            for aid, aq in box.allocations.items()
+        allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+        current_group_qty = sum(
+            aq for aid, aq in box.allocations.items()
             if aq > 0 and aid in result.items
+            and result.items[aid].fungible_group == item.fungible_group
         )
-        if group_in_box:
-            if item.fungible_degree >= 1.0:
-                return float("-inf")  # hard block: near-identical items
-            fungible_spread = -item.fungible_degree  # graduated penalty
+        if current_group_qty > 0:
+            if current_group_qty + qty > 2 * allowance:
+                return float("-inf")  # hard block: would exceed 2x allowance
+            excess = max(0, current_group_qty + qty - allowance)
+            fungible_spread = -item.fungible_degree * excess  # graduated penalty
         else:
             fungible_spread = FUNGIBLE_NEW_GROUP_BONUS
     else:
