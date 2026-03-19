@@ -335,7 +335,7 @@ def _run_leaderboard(
             name,
             f"{comp['score']:.1f}",
             f"{-comp['value_pen']:+.1f}",
-            f"{-comp['dupe_pen']:+.1f}",
+            f"{-comp['gq_pen']:+.1f}",
             f"{-comp['diversity_pen']:+.1f}",
             f"{-comp['fair_pen']:+.1f}",
             f"{-comp['pref_pen']:+.1f}",

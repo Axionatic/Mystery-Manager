@@ -91,16 +91,16 @@ def main():
     print(f"\n{'='*80}")
     print(f"  OFFER {offer_id} — STRATEGY LEADERBOARD")
     print(f"{'='*80}")
-    print(f"  {'Rank':<6} {'Strategy':<20} {'Score':>7} {'Value':>8} {'Dupes':>8} "
-          f"{'Diver':>8} {'Fair':>8} {'Pref':>8}")
-    print(f"  {'-'*74}")
+    print(f"  {'Rank':<6} {'Strategy':<20} {'Score':>7} {'Value':>8} {'GrpQty':>8} "
+          f"{'Diver':>8} {'Fair':>8} {'Pref':>8} {'Desir':>8}")
+    print(f"  {'-'*82}")
 
     ranked = sorted(results.items(), key=lambda x: x[1][0]["score"], reverse=True)
     for i, (name, (comp, metrics, _, _, elapsed)) in enumerate(ranked, 1):
         print(f"  {i:<6} {name:<20} {comp['score']:>7.1f} "
-              f"{-comp['value_pen']:>+8.1f} {-comp['dupe_pen']:>+8.1f} "
+              f"{-comp['value_pen']:>+8.1f} {-comp['gq_pen']:>+8.1f} "
               f"{-comp['diversity_pen']:>+8.1f} {-comp['fair_pen']:>+8.1f} "
-              f"{-comp['pref_pen']:>+8.1f}")
+              f"{-comp['pref_pen']:>+8.1f} {-comp.get('desir_pen', 0):>+8.1f}")
 
     print()
     print(f"  Score = 100 - penalties.  Higher is better.")

@@ -209,8 +209,9 @@ class ResultsScreen(HelpMixin, Screen):
 
         from allocator.strategies._scoring import value_penalty
         from allocator.config import (
-            DUPE_PENALTY_MULTIPLIER,
+            DESIRABILITY_PENALTY_MULTIPLIER,
             DIVERSITY_PENALTY_MULTIPLIER,
+            GROUP_QTY_MULTIPLIER,
             PREF_VIOLATION_PENALTY,
         )
 
@@ -227,13 +228,15 @@ class ResultsScreen(HelpMixin, Screen):
             )
             if m:
                 val_pen = value_penalty(m["value_pct"])
-                dup_pen = m["weighted_dupe_penalty"] * DUPE_PENALTY_MULTIPLIER
+                gq_pen = m["group_qty_penalty"] * GROUP_QTY_MULTIPLIER
                 div_pen = (1.0 - m["diversity_score"]) * DIVERSITY_PENALTY_MULTIPLIER
+                desir_pen = (1.0 - m.get("desirability_score", 0.5)) * DESIRABILITY_PENALTY_MULTIPLIER
                 pref_pen = m["pref_violations"] * PREF_VIOLATION_PENALTY
-                total_pen = val_pen + dup_pen + div_pen + pref_pen
+                total_pen = val_pen + gq_pen + div_pen + desir_pen + pref_pen
                 m["_val_pen"] = val_pen
-                m["_dup_pen"] = dup_pen
+                m["_gq_pen"] = gq_pen
                 m["_div_pen"] = div_pen
+                m["_desir_pen"] = desir_pen
                 m["_total_pen"] = total_pen
                 m["_box_score"] = 100.0 - total_pen
                 metrics.append(m)
@@ -283,9 +286,10 @@ class ResultsScreen(HelpMixin, Screen):
         self.query_one("#aggregate-label", Label).update(
             f"Composite score: {score:.1f} / 100   "
             f"(value -{composite.get('value_pen', 0):.1f}  "
-            f"dupes -{composite.get('dupe_pen', 0):.1f}  "
+            f"grp-qty -{composite.get('gq_pen', 0):.1f}  "
             f"diversity -{composite.get('diversity_pen', 0):.1f}  "
-            f"fairness -{composite.get('fair_pen', 0):.1f})"
+            f"fairness -{composite.get('fair_pen', 0):.1f}  "
+            f"desir -{composite.get('desir_pen', 0):.1f})"
         )
 
         table = self.query_one("#results-table", DataTable)
@@ -303,7 +307,7 @@ class ResultsScreen(HelpMixin, Screen):
             box_score = m.get("_box_score", 0.0)
             total_pen = m.get("_total_pen", 0.0)
             val_pen = m.get("_val_pen", 0.0)
-            dup_pen = m.get("_dup_pen", 0.0)
+            dup_pen = m.get("_gq_pen", 0.0)
             div_pen = m.get("_div_pen", 0.0)
             table.add_row(
                 box.name[:30],
