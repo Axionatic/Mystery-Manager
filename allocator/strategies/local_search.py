@@ -17,11 +17,14 @@ import math
 
 from allocator.config import (
     BOX_TIERS,
+    DESIRABILITY_PENALTY_MULTIPLIER,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
-    DUPE_PENALTY_FLOOR,
-    DUPE_PENALTY_MULTIPLIER,
     FAIRNESS_PENALTY_MULTIPLIER,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_EXPONENT,
+    GROUP_QTY_MULTIPLIER,
+    GROUP_QTY_TIER_RATIO,
     LOCAL_SEARCH_MAX_ITERATIONS,
 )
 from allocator.models import AllocationResult
@@ -40,12 +43,13 @@ MAX_ITERATIONS = LOCAL_SEARCH_MAX_ITERATIONS
 class _BoxState:
     """Cached per-box metrics for incremental objective computation."""
 
-    __slots__ = ("value_pct", "diversity_score", "weighted_dupe_penalty")
+    __slots__ = ("value_pct", "diversity_score", "group_qty_penalty", "desirability_score")
 
     def __init__(self):
         self.value_pct = 0.0
         self.diversity_score = 0.0
-        self.weighted_dupe_penalty = 0.0
+        self.group_qty_penalty = 0.0
+        self.desirability_score = 0.5
 
 
 class _ObjectiveCache:
@@ -113,37 +117,49 @@ class _ObjectiveCache:
                 score += weight
         state.diversity_score = score
 
-        # Weighted dupe penalty (track count + degree per fungible group)
-        group_counts: dict[str, tuple[int, float]] = {}
+        # Group-qty penalty (total qty per group including singletons)
+        allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+        groups: dict[str, tuple[int, float]] = {}
         for item_id, qty in box.allocations.items():
             if qty > 0 and item_id in items:
                 item = items[item_id]
                 if item.fungible_group:
-                    if item.fungible_group in group_counts:
-                        prev_count, degree = group_counts[item.fungible_group]
-                        group_counts[item.fungible_group] = (prev_count + 1, degree)
-                    else:
-                        group_counts[item.fungible_group] = (1, item.fungible_degree)
-        state.weighted_dupe_penalty = sum(
-            max(0, count - 1) * max(degree - DUPE_PENALTY_FLOOR, 0.0)
-            for count, degree in group_counts.values()
+                    key = item.fungible_group
+                    degree = item.fungible_degree
+                else:
+                    key = f"__item_{item_id}"
+                    degree = 1.0
+                if key in groups:
+                    prev_qty, prev_degree = groups[key]
+                    groups[key] = (prev_qty + qty, prev_degree)
+                else:
+                    groups[key] = (qty, degree)
+        state.group_qty_penalty = sum(
+            (max(0, total_qty - allowance) ** GROUP_QTY_EXPONENT) * degree
+            for total_qty, degree in groups.values()
+            if total_qty > allowance
         )
 
-    def save(self, *box_indices: int) -> list[tuple[float, float, float]]:
+        # Desirability score
+        from allocator.desirability import compute_box_desirability
+        state.desirability_score = compute_box_desirability(box.allocations, items)
+
+    def save(self, *box_indices: int) -> list[tuple[float, float, float, float]]:
         """Save state of specified boxes for cheap restore on revert."""
         return [
             (self.states[i].value_pct, self.states[i].diversity_score,
-             self.states[i].weighted_dupe_penalty)
+             self.states[i].group_qty_penalty, self.states[i].desirability_score)
             for i in box_indices
         ]
 
-    def restore(self, box_indices: tuple[int, ...], saved: list[tuple[float, float, float]]) -> None:
+    def restore(self, box_indices: tuple[int, ...], saved: list[tuple[float, float, float, float]]) -> None:
         """Restore previously saved state (O(1) instead of recompute)."""
-        for idx, (vp, ds, wdp) in zip(box_indices, saved):
+        for idx, (vp, ds, gqp, desir) in zip(box_indices, saved):
             s = self.states[idx]
             s.value_pct = vp
             s.diversity_score = ds
-            s.weighted_dupe_penalty = wdp
+            s.group_qty_penalty = gqp
+            s.desirability_score = desir
 
     def recompute(self, *box_indices: int) -> None:
         """Recompute only the specified boxes."""
@@ -167,8 +183,9 @@ class _ObjectiveCache:
         for s in states:
             total_box_pen += (
                 value_penalty(s.value_pct)
-                + s.weighted_dupe_penalty * DUPE_PENALTY_MULTIPLIER
+                + s.group_qty_penalty * GROUP_QTY_MULTIPLIER
                 + (1.0 - s.diversity_score) * DIVERSITY_PENALTY_MULTIPLIER
+                + (1.0 - s.desirability_score) * DESIRABILITY_PENALTY_MULTIPLIER
             )
         avg_box_pen = total_box_pen / n
 

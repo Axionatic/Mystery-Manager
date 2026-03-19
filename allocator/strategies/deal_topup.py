@@ -11,6 +11,8 @@ import logging
 
 from allocator.config import (
     CHEAP_ITEM_THRESHOLD,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_TIER_RATIO,
     MAX_SLOT_QTY,
     SLOT_DEGREE_THRESHOLD,
     TOPUP_MAX_PASSES,
@@ -219,10 +221,15 @@ def _deal_card_deal(result: AllocationResult, num_boxes: int) -> None:
             if result.box_value(box) >= box.target_value:
                 continue
 
-            # For low-degree fungible items, skip if group already in box
+            # For low-degree fungible items, skip if group qty >= allowance
             if item.fungible_group:
-                box_groups = box_fungible_groups(box, result)
-                if item.fungible_group in box_groups:
+                allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+                current_group_qty = sum(
+                    aq for aid, aq in box.allocations.items()
+                    if aq > 0 and aid in result.items
+                    and result.items[aid].fungible_group == item.fungible_group
+                )
+                if current_group_qty >= allowance:
                     continue
 
             remaining = result.remaining_overage(item.id)

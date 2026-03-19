@@ -21,8 +21,10 @@ from allocator.config import (
     BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
-    DUPE_PENALTY_FLOOR,
-    DUPE_PENALTY_MULTIPLIER,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_EXPONENT,
+    GROUP_QTY_MULTIPLIER,
+    GROUP_QTY_TIER_RATIO,
     VALUE_CEILING_PCT,
 )
 from allocator.models import AllocationResult, Item, MysteryBox
@@ -94,10 +96,14 @@ def _seed_score(
                 delta = (eff_after - eff_before) / n_avail
                 score += weight * delta * DIVERSITY_PENALTY_MULTIPLIER
 
-    # Dupe cost: penalise adding to a group already in the box
+    # Group-qty cost: penalise excess above allowance
     if item.fungible_group and item.fungible_group in box_groups:
-        eff = max(item.fungible_degree - DUPE_PENALTY_FLOOR, 0.0)
-        score -= eff * DUPE_PENALTY_MULTIPLIER
+        current_qty, degree = box_groups[item.fungible_group]
+        allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+        new_qty = current_qty + 1
+        excess = max(0, new_qty - allowance)
+        if excess > 0:
+            score -= (excess ** GROUP_QTY_EXPONENT) * degree * GROUP_QTY_MULTIPLIER
 
     # Tiebreak: prefer placing expensive items (harder to place later)
     score += item.price * 1e-8

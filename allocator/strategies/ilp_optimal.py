@@ -14,9 +14,11 @@ from allocator.config import (
     BOX_TIERS,
     DIVERSITY_PENALTY_MULTIPLIER,
     DIVERSITY_WEIGHTS,
-    DUPE_PENALTY_FLOOR,
-    DUPE_PENALTY_MULTIPLIER,
     FAIRNESS_PENALTY_MULTIPLIER,
+    GROUP_QTY_ALLOWANCE_BASE,
+    GROUP_QTY_EXPONENT,
+    GROUP_QTY_MULTIPLIER,
+    GROUP_QTY_TIER_RATIO,
     ILP_BALANCE_WEIGHT,
     ILP_COVERAGE_WEIGHT,
     ILP_HHI_BREAKPOINTS,
@@ -168,20 +170,22 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
             f"ceiling_{b}",
         )
 
-    # Hard fungible constraint: at most 1 item per fungible group per box
-    # (for groups with degree >= 1.0)
+    # Ceiling guard per fungible group: total qty <= ceil(2 * allowance)
+    import math as _math
     fungible_groups: dict[str, list[int]] = {}
     for i, item in enumerate(items):
-        if item.fungible_group and item.fungible_degree >= 1.0:
+        if item.fungible_group:
             fungible_groups.setdefault(item.fungible_group, []).append(i)
 
     for group_name, member_indices in fungible_groups.items():
         if len(member_indices) <= 1:
             continue
         for b in range(n_boxes):
+            allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(boxes[b].tier, 1.0)
+            cap = _math.ceil(2 * allowance)
             prob += (
-                pulp.lpSum(y[mi][b] for mi in member_indices) <= 1,
-                f"fungible_hard_{group_name}_{b}",
+                pulp.lpSum(x[mi][b] for mi in member_indices) <= cap,
+                f"fungible_cap_{group_name}_{b}",
             )
 
     # -----------------------------------------------------------------------
@@ -293,41 +297,58 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
         )
 
     # -----------------------------------------------------------------------
-    # 4c. Soft dupe penalty
+    # 4c. Group-qty penalty (excess above allowance, power function)
     # -----------------------------------------------------------------------
-    # For each fungible group with effective weight > 0, model dupes
+    # Only model explicit fungible groups (singletons too numerous for ILP)
     all_fungible: dict[str, tuple[float, list[int]]] = {}
     for i, item in enumerate(items):
         if item.fungible_group:
-            eff = max(item.fungible_degree - DUPE_PENALTY_FLOOR, 0.0)
             if item.fungible_group in all_fungible:
                 _, members = all_fungible[item.fungible_group]
                 members.append(i)
             else:
-                all_fungible[item.fungible_group] = (eff, [i])
+                all_fungible[item.fungible_group] = (item.fungible_degree, [i])
 
-    pen_dupe = {}
+    pen_gq = {}
     for b in range(n_boxes):
-        pen_dupe[b] = pulp.LpVariable(f"pen_dupe_{b}", lowBound=0)
+        pen_gq[b] = pulp.LpVariable(f"pen_gq_{b}", lowBound=0)
 
-    dupe_terms = {b: [] for b in range(n_boxes)}
-    for group_name, (eff_weight, member_indices) in all_fungible.items():
-        if eff_weight <= 0 or len(member_indices) <= 1:
+    gq_terms = {b: [] for b in range(n_boxes)}
+
+    # Tangent-line breakpoints for excess^exponent approximation
+    _gq_breakpoints = [0, 1, 2, 4, 6, 8]
+
+    for group_name, (degree, member_indices) in all_fungible.items():
+        if len(member_indices) <= 1:
             continue
 
         for b in range(n_boxes):
-            # count_in_box = sum of y[i][b] for members
-            count_expr = pulp.lpSum(y[i][b] for i in member_indices)
-            # dupe_var >= count - 1, dupe_var >= 0
-            dv = pulp.LpVariable(f"dupe_{group_name}_{b}", lowBound=0)
-            prob += dv >= count_expr - 1
-            dupe_terms[b].append(eff_weight * DUPE_PENALTY_MULTIPLIER * dv)
+            allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(boxes[b].tier, 1.0)
+            # group_qty = sum of x[i][b] for members (qty, not binary)
+            group_qty_expr = pulp.lpSum(x[i][b] for i in member_indices)
+            # excess >= group_qty - allowance, excess >= 0
+            excess = pulp.LpVariable(f"gq_excess_{group_name}_{b}", lowBound=0)
+            prob += excess >= group_qty_expr - allowance
+
+            # Epigraph for excess^exponent via tangent lines
+            pen_var = pulp.LpVariable(f"gq_pen_{group_name}_{b}", lowBound=0)
+            n_exp = GROUP_QTY_EXPONENT
+            for xi in _gq_breakpoints:
+                if xi == 0:
+                    # pen >= 0 (already handled by lowBound)
+                    continue
+                f_xi = xi ** n_exp
+                df_xi = n_exp * xi ** (n_exp - 1)
+                # pen >= df_xi * excess + (f_xi - df_xi * xi)
+                prob += pen_var >= df_xi * excess + (f_xi - df_xi * xi)
+
+            gq_terms[b].append(degree * GROUP_QTY_MULTIPLIER * pen_var)
 
     for b in range(n_boxes):
-        if dupe_terms[b]:
-            prob += pen_dupe[b] >= pulp.lpSum(dupe_terms[b]), f"dupe_pen_{b}"
+        if gq_terms[b]:
+            prob += pen_gq[b] >= pulp.lpSum(gq_terms[b]), f"gq_pen_{b}"
         else:
-            prob += pen_dupe[b] == 0, f"dupe_pen_{b}"
+            prob += pen_gq[b] == 0, f"gq_pen_{b}"
 
     # -----------------------------------------------------------------------
     # 4d. Fairness via MAD proxy
@@ -349,10 +370,10 @@ def _solve_ilp(result: AllocationResult, pulp) -> None:
     )
 
     # -----------------------------------------------------------------------
-    # 4e. Objective: minimise avg(pen_val + pen_dupe + pen_div) + fair_pen
+    # 4e. Objective: minimise avg(pen_val + pen_gq + pen_div) + fair_pen
     # -----------------------------------------------------------------------
     avg_box_pen = pulp.lpSum(
-        pen_val[b] + pen_dupe[b] + pen_div[b] for b in range(n_boxes)
+        pen_val[b] + pen_gq[b] + pen_div[b] for b in range(n_boxes)
     ) / n_boxes
 
     prob += avg_box_pen + fair_pen
