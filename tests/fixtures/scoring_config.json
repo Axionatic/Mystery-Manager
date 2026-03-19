@@ -14,7 +14,6 @@
   },
 
   "slot_degree_threshold": 0.7,
-  "dupe_penalty_floor": 0.5,
 
   "max_slot_qty": {
     "small": 4,
@@ -50,7 +49,12 @@
     "carrot":   [["Carrots -"],  "root_veg",     "cooking",  "orange", "long"]
   },
 
-  "dupe_penalty_multiplier": 8.0,
+  "group_qty_multiplier": 8.0,
+  "group_qty_allowance_base": 2,
+  "group_qty_tier_ratio": {"small": 1.0, "medium": 1.5, "large": 2.0},
+  "group_qty_exponent": 1.5,
+  "desirability_penalty_multiplier": 5.0,
+  "desirability_shrinkage_prior": 5,
   "diversity_penalty_multiplier": 10.0,
   "fairness_penalty_multiplier": 0.5,
   "pref_violation_penalty": 20.0,

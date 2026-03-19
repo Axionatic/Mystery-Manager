@@ -1,12 +1,12 @@
-"""Tests for allocator/strategies/_scoring.py — value_penalty, dupe penalty, box/total penalty."""
+"""Tests for allocator/strategies/_scoring.py — value_penalty, group-qty penalty, box/total penalty."""
 
 import pytest
 
 from allocator.strategies._scoring import (
     box_penalty,
+    group_qty_penalty_for_box,
     total_penalty,
     value_penalty,
-    weighted_dupe_penalty_for_box,
 )
 from allocator.strategies._helpers import compute_available_tags
 
@@ -59,55 +59,82 @@ class TestValuePenalty:
         assert value_penalty(113.9) < 1.0  # 0.1^1.25 is tiny
 
 
-# ── weighted_dupe_penalty_for_box ───────────────────────────────────────────
+# ── group_qty_penalty_for_box ─────────────────────────────────────────────
 
 
-class TestWeightedDupePenalty:
-    def test_no_dupes(self, make_item, make_box, make_result):
-        item1 = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
-        item2 = make_item(id=2, fungible_group="banana", fungible_degree=1.0)
-        box = make_box(allocations={1: 1, 2: 1})
-        result = make_result(items=[item1, item2], boxes=[box])
-        assert weighted_dupe_penalty_for_box(box, result) == 0.0
+class TestGroupQtyPenalty:
+    def test_below_allowance_zero_penalty(self, make_item, make_box, make_result):
+        """Qty within allowance → zero penalty."""
+        # allowance = 2 * 1.0 = 2 for small tier
+        item = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
+        box = make_box(tier="small", allocations={1: 2})
+        result = make_result(items=[item], boxes=[box])
+        assert group_qty_penalty_for_box(box, result) == 0.0
 
-    def test_single_dupe(self, make_item, make_box, make_result):
+    def test_at_allowance_zero_penalty(self, make_item, make_box, make_result):
+        """Exactly at allowance boundary → zero penalty."""
         item1 = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
         item2 = make_item(id=2, fungible_group="apple", fungible_degree=0.7)
-        box = make_box(allocations={1: 1, 2: 1})
+        box = make_box(tier="small", allocations={1: 1, 2: 1})
         result = make_result(items=[item1, item2], boxes=[box])
-        # 1 dupe * max(0.7 - 0.5, 0) = 1 * 0.2 = 0.2
-        assert abs(weighted_dupe_penalty_for_box(box, result) - 0.2) < 0.01
+        assert group_qty_penalty_for_box(box, result) == 0.0
 
-    def test_degree_below_floor(self, make_item, make_box, make_result):
-        """Degree < DUPE_PENALTY_FLOOR (0.5) → zero penalty even with dupes."""
-        item1 = make_item(id=1, fungible_group="herb", fungible_degree=0.3)
-        item2 = make_item(id=2, fungible_group="herb", fungible_degree=0.3)
-        box = make_box(allocations={1: 1, 2: 1})
-        result = make_result(items=[item1, item2], boxes=[box])
-        assert weighted_dupe_penalty_for_box(box, result) == 0.0
-
-    def test_no_fungible_items(self, make_item, make_box, make_result):
-        item = make_item(id=1, fungible_group=None)
-        box = make_box(allocations={1: 2})
+    def test_above_allowance_penalised(self, make_item, make_box, make_result):
+        """Qty > allowance → positive penalty."""
+        item = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
+        box = make_box(tier="small", allocations={1: 4})
         result = make_result(items=[item], boxes=[box])
-        assert weighted_dupe_penalty_for_box(box, result) == 0.0
+        pen = group_qty_penalty_for_box(box, result)
+        # excess = 4 - 2 = 2, penalty = 2^1.5 * 0.7 ≈ 1.98
+        assert pen > 0.0
+        assert abs(pen - (2 ** 1.5) * 0.7) < 0.01
 
-    def test_multi_group_dupes(self, make_item, make_box, make_result):
+    def test_singleton_penalised(self, make_item, make_box, make_result):
+        """Item without fungible_group, qty > allowance → penalised as singleton."""
+        item = make_item(id=1, fungible_group=None)
+        box = make_box(tier="small", allocations={1: 4})
+        result = make_result(items=[item], boxes=[box])
+        pen = group_qty_penalty_for_box(box, result)
+        # excess = 4 - 2 = 2, penalty = 2^1.5 * 1.0 (singleton degree=1.0) ≈ 2.83
+        assert pen > 0.0
+
+    def test_degree_scales_penalty(self, make_item, make_box, make_result):
+        """Higher degree → higher penalty for same qty."""
+        item_low = make_item(id=1, fungible_group="apple", fungible_degree=0.3)
+        item_high = make_item(id=2, fungible_group="banana", fungible_degree=1.0)
+        box_low = make_box(name="low@test", tier="small", allocations={1: 4})
+        box_high = make_box(name="high@test", tier="small", allocations={2: 4})
+        result = make_result(items=[item_low, item_high], boxes=[box_low, box_high])
+        pen_low = group_qty_penalty_for_box(box_low, result)
+        pen_high = group_qty_penalty_for_box(box_high, result)
+        assert pen_high > pen_low
+
+    def test_tier_scaling(self, make_item, make_box, make_result):
+        """Larger tiers get higher allowance → less penalty for same qty."""
+        item_s = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
+        item_l = make_item(id=2, fungible_group="apple", fungible_degree=0.7)
+        box_small = make_box(name="s@test", tier="small", allocations={1: 4})
+        box_large = make_box(name="l@test", tier="large", allocations={2: 4})
+        result = make_result(items=[item_s, item_l], boxes=[box_small, box_large])
+        # small allowance=2, large allowance=2*2.0=4
+        pen_small = group_qty_penalty_for_box(box_small, result)
+        pen_large = group_qty_penalty_for_box(box_large, result)
+        assert pen_small > pen_large
+        assert pen_large == 0.0  # 4 == allowance of 4
+
+    def test_multiple_groups_summed(self, make_item, make_box, make_result):
+        """Penalties from multiple groups add together."""
         items = [
             make_item(id=1, fungible_group="apple", fungible_degree=0.7),
-            make_item(id=2, fungible_group="apple", fungible_degree=0.7),
-            make_item(id=3, fungible_group="tomato", fungible_degree=1.0),
-            make_item(id=4, fungible_group="tomato", fungible_degree=1.0),
+            make_item(id=2, fungible_group="banana", fungible_degree=1.0),
         ]
-        box = make_box(allocations={1: 1, 2: 1, 3: 1, 4: 1})
+        box = make_box(tier="small", allocations={1: 4, 2: 4})
         result = make_result(items=items, boxes=[box])
-        # apple: 1 dupe * max(0.7-0.5,0)=0.2, tomato: 1 dupe * max(1.0-0.5,0)=0.5
-        assert abs(weighted_dupe_penalty_for_box(box, result) - 0.7) < 0.01
-
-    def test_empty_box(self, make_box, make_result, make_item):
-        box = make_box()
-        result = make_result(items=[make_item()], boxes=[box])
-        assert weighted_dupe_penalty_for_box(box, result) == 0.0
+        pen = group_qty_penalty_for_box(box, result)
+        # Each group: excess=2, penalty=2^1.5 * degree
+        apple_pen = (2 ** 1.5) * 0.7
+        banana_pen = (2 ** 1.5) * 1.0
+        assert abs(pen - (apple_pen + banana_pen)) < 0.01
 
 
 # ── box_penalty ─────────────────────────────────────────────────────────────
@@ -116,9 +143,6 @@ class TestWeightedDupePenalty:
 class TestBoxPenalty:
     def test_perfect_box_low_penalty(self, make_item, make_box, make_result):
         """Box at sweet spot with good diversity → low penalty."""
-        # Create a box with value exactly at 115% of small box price
-        # Small price = 2000, target = 2300
-        # 115% of 2000 = 2300
         items = [
             make_item(id=1, price=800, sub_category="tropical", usage_type="snacking",
                       colour="yellow", shape="long"),
@@ -131,8 +155,8 @@ class TestBoxPenalty:
         result = make_result(items=items, boxes=[box])
         tags = compute_available_tags(result)
         pen = box_penalty(box, result, tags)
-        # Should be relatively low but not zero (diversity won't be perfect)
-        assert pen < 10.0
+        # Should be relatively low but not zero (diversity + desirability won't be perfect)
+        assert pen < 15.0
 
     def test_empty_box_has_penalty(self, make_box, make_result, make_item):
         items = [make_item(id=1)]
@@ -142,6 +166,16 @@ class TestBoxPenalty:
         pen = box_penalty(box, result, tags)
         # 0% value → high value penalty, no diversity → high diversity penalty
         assert pen > 50.0
+
+    def test_includes_desirability(self, make_item, make_box, make_result):
+        """box_penalty should include a desirability component."""
+        item = make_item(id=1, price=2300)  # 115% of small box price
+        box = make_box(allocations={1: 1})
+        result = make_result(items=[item], boxes=[box])
+        tags = compute_available_tags(result)
+        pen = box_penalty(box, result, tags)
+        # Should include desirability penalty (unknown item = 0.5, so (1-0.5)*5.0 = 2.5)
+        assert pen > 0.0
 
 
 # ── total_penalty ───────────────────────────────────────────────────────────
@@ -162,7 +196,6 @@ class TestTotalPenalty:
         tags = compute_available_tags(result)
         pen = total_penalty(result, tags)
         # Fairness component should be 0 since both boxes have same value
-        # Total penalty = avg(box_penalties) + 0
         bp1 = box_penalty(box1, result, tags)
         bp2 = box_penalty(box2, result, tags)
         avg_bp = (bp1 + bp2) / 2
@@ -191,3 +224,32 @@ class TestTotalPenalty:
         pen = total_penalty(result, tags)
         bp = box_penalty(box, result, tags)
         assert abs(pen - bp) < 0.01
+
+
+# ── params override ─────────────────────────────────────────────────────────
+
+
+class TestParamsOverride:
+    def test_value_penalty_params_override(self):
+        """Params dict should override config defaults."""
+        # Default sweet spot is 114-117
+        assert value_penalty(115.0) == 0.0
+        # Override to make 115 outside sweet spot
+        params = {"value_sweet_from": 116, "value_sweet_to": 118}
+        pen = value_penalty(115.0, params=params)
+        assert pen > 0.0
+
+    def test_group_qty_params_override(self, make_item, make_box, make_result):
+        """Params dict should override group-qty config."""
+        item = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
+        box = make_box(tier="small", allocations={1: 4})
+        result = make_result(items=[item], boxes=[box])
+
+        # Default allowance base=2, exponent=1.5
+        pen_default = group_qty_penalty_for_box(box, result)
+        assert pen_default > 0.0
+
+        # Override with higher allowance → less penalty
+        params = {"group_qty_allowance_base": 4, "group_qty_tier_ratio": {"small": 1.0}}
+        pen_override = group_qty_penalty_for_box(box, result, params=params)
+        assert pen_override == 0.0  # 4 == allowance of 4

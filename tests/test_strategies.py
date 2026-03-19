@@ -86,23 +86,23 @@ class TestStrategyInvariants:
             )
 
     def test_no_hard_fungible_conflicts(self, strategy_name, two_box_result):
-        """No box should contain hard fungible conflicts (degree >= 1.0)."""
+        """No group should exceed 2x allowance in any box."""
+        from allocator.config import GROUP_QTY_ALLOWANCE_BASE, GROUP_QTY_TIER_RATIO
         strategy = get_strategy(strategy_name)
         strategy(two_box_result)
         for box in two_box_result.boxes:
+            allowance = GROUP_QTY_ALLOWANCE_BASE * GROUP_QTY_TIER_RATIO.get(box.tier, 1.0)
+            group_totals: dict[str, int] = {}
             for item_id, qty in box.allocations.items():
                 if qty > 0 and item_id in two_box_result.items:
                     item = two_box_result.items[item_id]
-                    if item.fungible_group and item.fungible_degree >= 1.0:
-                        # Check if another item from same group is in box
-                        for other_id, other_qty in box.allocations.items():
-                            if other_id != item_id and other_qty > 0 and other_id in two_box_result.items:
-                                other = two_box_result.items[other_id]
-                                if other.fungible_group == item.fungible_group:
-                                    pytest.fail(
-                                        f"{strategy_name}: box {box.name} has hard fungible conflict "
-                                        f"between {item.name} and {other.name}"
-                                    )
+                    key = item.fungible_group or f"__item_{item_id}"
+                    group_totals[key] = group_totals.get(key, 0) + qty
+            for group_key, total_qty in group_totals.items():
+                assert total_qty <= 2 * allowance, (
+                    f"{strategy_name}: box {box.name} has group {group_key} "
+                    f"with qty {total_qty} > 2x allowance {2 * allowance}"
+                )
 
     def test_no_excluded_items(self, strategy_name, make_item, make_box, make_result, make_charity):
         """Strategies should respect exclusion rules."""

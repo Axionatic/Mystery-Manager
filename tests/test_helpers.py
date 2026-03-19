@@ -66,25 +66,32 @@ class TestWouldExceedCeiling:
 
 
 class TestHasHardFungibleConflict:
-    def test_no_fungible_group(self, make_item, make_box, make_result):
+    """Tests for allowance-based has_hard_fungible_conflict.
+
+    Small tier: allowance = 2 * 1.0 = 2. Hard conflict = current + qty > 2 * allowance = 4.
+    """
+    def test_no_fungible_group_under_limit(self, make_item, make_box, make_result):
+        """Singleton item with qty=1 on empty box → no conflict."""
         item = make_item(id=1, fungible_group=None)
         box = make_box()
         result = make_result(items=[item], boxes=[box])
         assert not has_hard_fungible_conflict(item, box, result)
 
-    def test_hard_conflict_degree_1(self, make_item, make_box, make_result):
+    def test_fungible_group_within_limit(self, make_item, make_box, make_result):
+        """Adding 1 banana when 1 already in box → total=2, 2x allowance=4 → ok."""
         existing = make_item(id=1, fungible_group="banana", fungible_degree=1.0)
         new_item = make_item(id=2, fungible_group="banana", fungible_degree=1.0)
         box = make_box(allocations={1: 1})
         result = make_result(items=[existing, new_item], boxes=[box])
-        assert has_hard_fungible_conflict(new_item, box, result)
-
-    def test_soft_conflict_degree_below_1(self, make_item, make_box, make_result):
-        existing = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
-        new_item = make_item(id=2, fungible_group="apple", fungible_degree=0.7)
-        box = make_box(allocations={1: 1})
-        result = make_result(items=[existing, new_item], boxes=[box])
         assert not has_hard_fungible_conflict(new_item, box, result)
+
+    def test_fungible_group_exceeds_limit(self, make_item, make_box, make_result):
+        """Adding 1 banana when 4 already in box → total=5 > 2*2=4 → conflict."""
+        existing = make_item(id=1, fungible_group="banana", fungible_degree=1.0)
+        new_item = make_item(id=2, fungible_group="banana", fungible_degree=1.0)
+        box = make_box(allocations={1: 4})
+        result = make_result(items=[existing, new_item], boxes=[box])
+        assert has_hard_fungible_conflict(new_item, box, result)
 
     def test_different_groups_no_conflict(self, make_item, make_box, make_result):
         existing = make_item(id=1, fungible_group="apple", fungible_degree=0.7)
@@ -98,6 +105,14 @@ class TestHasHardFungibleConflict:
         box = make_box()
         result = make_result(items=[item], boxes=[box])
         assert not has_hard_fungible_conflict(item, box, result)
+
+    def test_large_tier_higher_limit(self, make_item, make_box, make_result):
+        """Large tier: allowance=2*2.0=4, 2x=8. Adding when 7 in box → total=8, still ok."""
+        existing = make_item(id=1, fungible_group="banana", fungible_degree=1.0)
+        new_item = make_item(id=2, fungible_group="banana", fungible_degree=1.0)
+        box = make_box(tier="large", allocations={1: 7})
+        result = make_result(items=[existing, new_item], boxes=[box])
+        assert not has_hard_fungible_conflict(new_item, box, result)
 
 
 # ── box_fungible_groups ─────────────────────────────────────────────────────
@@ -152,9 +167,11 @@ class TestCanAssign:
         assert not can_assign(item, 1, box, result)
 
     def test_hard_fungible_conflict(self, make_item, make_box, make_result):
+        """Adding would exceed 2x allowance → can't assign."""
         existing = make_item(id=1, fungible_group="banana", fungible_degree=1.0, overage=5)
         new_item = make_item(id=2, fungible_group="banana", fungible_degree=1.0, overage=5)
-        box = make_box(allocations={1: 1})
+        # small: allowance=2, 2x=4. existing qty=4, adding 1 → 5 > 4
+        box = make_box(allocations={1: 4})
         result = make_result(items=[existing, new_item], boxes=[box])
         assert not can_assign(new_item, 1, box, result)
 
